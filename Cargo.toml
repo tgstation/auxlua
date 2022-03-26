@@ -2,7 +2,7 @@
 name = "auxlua"
 version = "0.1.0"
 authors = ["Y0SH1M4S73R <legoboyo@earthlink.net>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,5 +11,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = {git = "https://github.com/willox/auxtools"}
-mlua = {version = "0.7.3", features = ["lua54", "vendored"]}
-globals = "1"
+#mlua = {version = "0.8.0-beta.1", features = ["luau"]}
+mlua = {git = "https://github.com/Y0SH1M4S73R/mlua", branch = "luau_hooks", features = ["luau"]}

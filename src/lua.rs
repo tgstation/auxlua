@@ -57,6 +57,7 @@ impl Display for AuxluaError {
 impl Error for AuxluaError {}
 
 impl AuxluaError {
+    // This should take strings directly, rather than hiding the potentially expensive allocations
     pub fn new<T>(s: T) -> Self 
     where T: Into<String> {
         Self(s.into())
@@ -100,6 +101,7 @@ impl UserData for ListWrapper {
         });
 
         methods.add_method("set", |_, this, args: (Value, Value)| {
+            // Just `(key, value): (Value, Value)` at the above call
             let (key, value) = args;
             this.value.as_list().map_err(|_| runtime!("not a list"))
             .and_then(|list| auxtools::Value::try_from(key).and_then(|key_val|
@@ -126,6 +128,7 @@ impl UserData for ListWrapper {
 pub fn tablify_list(list: auxtools::List) -> DMResult<Value> {
     let mut vec: Vec<(Value, Value)> = Vec::new();
     for i in 1..=list.len() {
+        // Does mlua not provide a basic iterator or similar?
         let key = &list.get(i)?;
         if key.raw.tag == ValueTag::Null {
             continue
@@ -162,10 +165,11 @@ where T: Clone + Into<auxtools::Value> {
 fn datum_call_proc<'lua>(lua: &'lua Lua, datum: &auxtools::Value, args: MultiValue<'lua>) -> mlua::Result<Value> {
     let mut args_iter = args.into_iter();
     let first_arg: mlua::Value<'lua> = args_iter.next()
-    .ok_or(external!("attempted call with 0 arguments"))?;
+    .ok_or(external!("attempted call with 0 arguments"))?; // For this error to be more useful, explain what's expected that wasn't (I'm assuming the self datum).
     let proc = String::from_lua(first_arg, lua)?;
     let proc_args = args_iter.try_fold::<_, _, mlua::Result<_>>(Vec::<Value>::new(), |mut acc, val| {
         let arg = Value::from_lua(val, lua)?;
+        // Why are you using fold here instead of just collect?
         acc.push(arg);
         Ok(acc)
     })?;
@@ -291,6 +295,7 @@ pub fn global_proc_call<'a>(lua: &'a mlua::Lua, args: MultiValue<'a>) -> mlua::R
     let first_arg: mlua::Value<'a> = args_iter.next()
     .ok_or(external!("attempted call with 0 arguments"))?;
     let mut proc_name = String::from_lua(first_arg, lua)?;
+    // Same here, use collect
     let proc_args = args_iter.try_fold::<_, _, mlua::Result<_>>(Vec::<Value>::new(), |mut acc, val| {
         let arg = Value::from_lua(val, lua)?;
         acc.push(arg);
@@ -361,10 +366,12 @@ impl PartialEq for Value {
         match self {
             Self::Null => {
                 match other {
+                    // Why not just `other == Self::Null`?
                     Self::Null => true,
                     _ => false
                 }
             },
+            // Don't use these one letter variables everywhere. Write them out completely.
             Self::Number(n) => {
                 match other {
                     Self::Number(n2) => n == n2,
@@ -394,6 +401,7 @@ impl PartialEq for Value {
             },
             Self::Datum(w) => {
                 match other {
+                    // Why so much cloning?
                     Self::ListRef(l) => w.upgrade_or_null() == l.clone(),
                     Self::Datum(w2) => w.upgrade_or_null() == w2.upgrade_or_null(),
                     Self::Global(g) => w.upgrade_or_null() == g.clone(),
@@ -502,6 +510,7 @@ impl<'lua> FromLua<'lua> for Value {
         };
         match value {
             mlua::Value::Nil => Ok(Self::Null),
+            // 1 if true, 2 if false???
             mlua::Value::Boolean(b) => Ok(Self::Number(if b {1.0} else {2.0})),
             mlua::Value::Integer(i) => Ok(Self::Number(i as f32)),
             mlua::Value::Number(n) => Ok(Self::Number(n as f32)),

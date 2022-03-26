@@ -2,6 +2,8 @@
 name = "auxlua"
 version = "0.1.0"
 authors = ["Y0SH1M4S73R <legoboyo@earthlink.net>"]
+
+# Upgrade to 2021
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,5 +13,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = {git = "https://github.com/willox/auxtools"}
+
+# As I told you over DMs, we should be using Luau, especially now that mlua supports it.
+# One of the central tenants of Luau is that it is sandboxed, and provides great benefits to us.
 mlua = {version = "0.7.3", features = ["lua54", "vendored"]}
+
+# You don't use this crate it looks like, remove it
 globals = "1"

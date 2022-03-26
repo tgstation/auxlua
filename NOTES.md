@@ -1,0 +1,5 @@
+- Include a pinned Cargo.lock file, as we are using this as a binary and not as a library, and we need to make sure that we're all on the same version.
+- Include a LICENSE. It is not legal to use code you find just because it is open source, it must include a permissive license. I would recommend either AGPL (to match with tgstation) or MPL 2.0 (my personal preference)
+- **You need to have GitHub actions build the DLL, with the pinned Cargo.lock.** Not only is it unergonomic to have to build the DLL manually every time, but we fundamentally cannot trust anything that does not come from a transparent source like actions. You can see how rust-g does it, it's probably sane enough.
+- Run `cargo fmt` and `cargo clippy`. There's a ton of stuff I would put code reviews for, but clippy will tell you most of them. Make sure both are run on GitHub actions.
+- `dm` should be an accessible global rather than something you require. This will allow us to use [selene](https://github.com/Kampfkarren/selene) to lint.

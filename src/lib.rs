@@ -1,6 +1,11 @@
+// Don't use nightly. Nightly is unstable and should not be used for production.
+// Use the once_cell crate.
 #![feature(once_cell)]
+
+// You use this in one place, just write it by hand.
 #![feature(try_find)]
 
+// Please alias Value here to something, it's causing a lot of confusion between auxtools values and Lua values
 use auxtools::{hook, runtime, shutdown, Value, List, Proc, DMResult, Runtime};
 use std::time::Instant;
 use std::convert::{TryFrom};
@@ -9,6 +14,7 @@ use std::collections::HashMap;
 use mlua::{Lua, Table, Thread, MetaMethod, FromLua, ToLua, Function, Debug, HookTriggers, ThreadStatus, MultiValue};
 use lua::{GlobalWrapper, AuxluaError, LUA_THREAD_START, GLOBAL_CALL_PROC_WRAPPER, DATUM_CALL_PROC_WRAPPER, SET_VAR_WRAPPER};
 
+// Remove this
 #[cfg(test)]
 mod tests {
     #[test]
@@ -20,16 +26,22 @@ mod tests {
 pub mod lua;
 
 thread_local!{
+    // It's not obvious what any of these variables are for.
     pub static CONTEXTS: RefCell<HashMap<String, Lua>> = RefCell::new(HashMap::new());
     pub static EXECUTION_LIMIT: RefCell<u128> = RefCell::new(100);
     pub static REQUIRE_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
 }
 
+// All these functions need to be documented on what they're doing.
+// It is requiring I put a lot of thought in on figuring it out.
 fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> mlua::Result<mlua::Value<'lua>> {
+    // Are you sure you need this explicit type? It should be infered from mlua::Value::Integer
     let i: i64 = 0;
     while i < i64::MAX {
         let value: mlua::Value = this.raw_get(i+1)?;
+        // Use contains instead
         if value == mlua::Nil {
+            // Return directly
             break;
         }
     }
@@ -40,6 +52,7 @@ fn wrap_require<'lua>(lua: &'lua Lua, name: String) -> mlua::Result<mlua::Value>
     let wrapper_result: Option<String> = REQUIRE_WRAPPER.with(|wrapper| {
         let wrapper_proc = Proc::find((wrapper.borrow().as_ref())?)?;
         let result = wrapper_proc.call(&[&Value::from_string(name.clone()).unwrap()]).ok()?;
+        // Drop Some and the ?, `ok()` returns an Option on its own.
         Some(result.as_string().ok()?)
     });
     if let Some(loader) = wrapper_result {
@@ -56,7 +69,9 @@ fn wrap_require<'lua>(lua: &'lua Lua, name: String) -> mlua::Result<mlua::Value>
     }
 }
 
+// Most of this seems strange, I would like to see documentation on all of this so I know what is useless.
 fn apply_context_vars(context: &Lua, id: String) -> DMResult<()> {
+    // Need way more whitespace here, these are all clumping together.
     let globals = context.globals();
     let dm_table = context.create_table().map_err(|e| specific_runtime!("{}", e))?;
     let world = context.create_userdata(GlobalWrapper::new(Value::world())).map_err(|e| specific_runtime!("{}", e))?;
@@ -85,6 +100,7 @@ fn apply_context_vars(context: &Lua, id: String) -> DMResult<()> {
     yield_table.set_metatable(Some(yield_metatable));
     globals.raw_set("__yield_table", yield_table).map_err(|e| specific_runtime!("{}", e))?;
     let original_require: Function = globals.raw_get("require").map_err(|e| specific_runtime!("{}", e))?;
+    // __require and _require seems very dumb. I figure one of them is internal, but it's still dumb.
     globals.raw_set("__require", original_require).map_err(|e| specific_runtime!("{}", e))?;
     let require = context.create_function(wrap_require).map_err(|e| specific_runtime!("{}", e))?;
     globals.raw_set("_require", require).map_err(|e| specific_runtime!("{}", e))?;
@@ -158,6 +174,8 @@ fn set_execution_limit(limit: Value) {
 fn new_context() {
     let new_context = Lua::new_with(mlua::StdLib::ALL_SAFE, mlua::LuaOptions::default())
     .map_err(|e| specific_runtime!("{}", e))?;
+    // Now that you'll be on edition 2021, you can use interpolation.
+    // format!("{new_context:p}") if I remember right.
     let context_hash: String = format!("{:p}", &new_context);
     apply_context_vars(&new_context, context_hash.clone())?;
     CONTEXTS.with(|contexts| {
@@ -166,6 +184,10 @@ fn new_context() {
     })
 }
 
+// Don't just use T as the generic here, use something like S to indicate it's a string.
+// But also, I don't see why this is using a generic in the first place.
+// Everything seems to be putzing around with strings, why not just &str?
+// If not, the bound should be AsRef<str> instead
 fn get_task_table_info<'lua, T>(lua: &'lua Lua, coroutine: Thread<'lua>, name: T) -> mlua::Result<Table<'lua>> 
 where T: Into<String> {
     let task_info_table: Table = lua.globals().raw_get("__task_info")?;
@@ -186,6 +208,7 @@ where T: Into<String> {
     if coroutine.status() == ThreadStatus::Resumable {
         let sleep_flag: mlua::Value = globals.raw_get("sleep_flag")
         .map_err(|e| specific_external!(e))?;
+        // Inverse this--if-not-else is hard to read, especially when this is so long.
         if sleep_flag != mlua::Nil {
             let sleep_queue: Table = globals.raw_get("__sleep_queue")
             .map_err(|e| specific_external!(e))?;
@@ -219,8 +242,11 @@ fn load(context: Value, script: Value, name: Value) {
     let name = name.as_string().ok();
     CONTEXTS.with(|contexts| {
         if let Some(lua_context) = contexts.borrow_mut().get_mut(&key) {
+            // Just extract this into its own function and `?`, all these and_thens are tough to get through
             lua_context.globals().raw_get("env")
             .and_then(|env: Table| lua_context.load(&script_text).set_environment(env))
+            // We are owning name (from name.as_string().ok()), then cloning it, then giving it back as a reference?
+            // Why all these intermediate steps?
             .and_then(|chunk| match name.clone() {
                 Some(name_string) => chunk.set_name(&name_string),
                 None => Ok(chunk)
@@ -250,6 +276,7 @@ fn get_globals(context: Value) {
             let ret: List = List::new();
             let env: Table = lua_context.globals().raw_get("env").map_err(|e| specific_runtime!("{}", e))?;
             for pair in env.pairs() {
+                // Early-continue, or `.filter(Pair::is_ok)` in the initial loop.
                 if pair.is_ok() {
                     let (table_key, value): (mlua::Value, mlua::Value) = pair.unwrap();
                     let key_string = Value::from_string(String::from_lua(table_key, lua_context)
@@ -261,6 +288,7 @@ fn get_globals(context: Value) {
                     } else {
                         let typename = value.type_name();
                         let mut typename_string = String::from(typename);
+                        // What is this and what is its naming scheme
                         typename_string.insert_str(0, "__lua_");
                         let value_typename = Value::from_string(typename_string).map_err(|e| specific_runtime!(e.message))?;
                         ret.set(key_string, value_typename)?;
@@ -269,6 +297,7 @@ fn get_globals(context: Value) {
             }
             Ok(Value::from(ret))
         } else {
+            // Early-return
             Err(specific_runtime!("No lua context at {}", key))
         }
     })
@@ -295,6 +324,7 @@ fn get_tasks(context: Value) {
             }
             Ok(Value::from(ret))
         } else {
+            // Early-return, same with everything else
             Err(specific_runtime!("No lua context at {}", key))
         }
     })
@@ -308,12 +338,17 @@ fn call(context: Value, function: Value, arguments: Value) {
             let new_path = List::new();
             new_path.append(function.clone());
             Ok(new_path)
-        })).or(Err(specific_runtime!("function must be a string or a list of table keys")))?;
+        }))
+            // Clippy will probably yell at you about this.
+            // You're performing these calls every time.
+            // You need to use `or_else` or just simpler procedural code.
+            .or(Err(specific_runtime!("function must be a string or a list of table keys")))?;
     let mapped_path = (1..=function_path.len()).map(|i| {
         let value = function_path.get(i)?;
         lua::Value::try_from(&value).map_err(|e| specific_runtime!(e.message))
     }).collect::<DMResult<Vec<lua::Value>>>()?;
     CONTEXTS.with(|contexts| {
+        // This is a great use case for cargo fmt, because I can't read this at all.
         if let Some(lua_context) = contexts.borrow().get(&key) {
             let arguments_list = arguments.as_list().unwrap_or(List::new());
             let func_args: Vec<mlua::Value> = (1..=arguments_list.len())
@@ -321,6 +356,7 @@ fn call(context: Value, function: Value, arguments: Value) {
                 .map_err(|e| specific_runtime!(e)))
             .collect::<Result<Vec<mlua::Value>, Runtime>>()?;
             let function_name: String = mapped_path.iter()
+            // If possible, type at the variables/returns instead, rather than at the call itself.
             .try_fold::<String, _, DMResult<String>>(String::new(), |mut acc, elem| {
                 if acc.len() > 0 {
                     acc += ".";
@@ -415,7 +451,10 @@ fn awaken(context: Value) {
                 yield_table.raw_remove(1)?;
                 Ok(Thread::from_lua(table_item, lua_context).ok())
             })
+            // This name isn't helpful.
+            // The important part is not that it's an option, it's that it could be a thread!
             .and_then(|opt: Option<Thread>| {
+                // Everything like this needs to be an early return.
                 if let Some(coroutine) = opt {
                     LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
                     let result = coroutine.resume(mlua::Nil);
@@ -437,8 +476,10 @@ fn awaken(context: Value) {
 }
 
 fn coroutine_result(res: (ThreadStatus, mlua::Result<MultiValue>, i64, String), context: &Lua) -> mlua::Result<Value> {
+    // Do `fn coroutine_result((status, ret, yield_index, name): (types here))` instead.
     let (status, ret, yield_index, name) = res;
     let return_list = &List::new();
+    // You definitely don't need the explicit type here
     let status_string: &str = match status {
         ThreadStatus::Resumable => "yielded",
         ThreadStatus::Unresumable => "finished",
@@ -487,6 +528,7 @@ fn kill_task(context: Value, task_info: Value) {
             match global_task_info_table.clone().pairs()
             .try_find(|pair: &mlua::Result<(Thread, Table)>| {
                 let (_, info) = pair.as_ref().map_err(|e| e.clone())?;
+                // Why clone?
                 for info_pair in info.clone().pairs::<mlua::Value, mlua::Value>() {
                     let (key, value) = info_pair?;
                     if value != target_task_info_table.raw_get(key)? {
@@ -499,6 +541,7 @@ fn kill_task(context: Value, task_info: Value) {
                 Some(result) => result.map_err(|e| specific_runtime!(e)).and_then(|(coroutine, info)| {
                     let index: i64 = info.raw_get("index").map_err(|e| specific_runtime!(e))?;
                     match info.raw_get::<_, String>("status").map_err(|e| specific_runtime!(e))? {
+                        // Match on the as_str() instead
                         x if x.as_str() == "sleep" => {
                             let sleep_queue: Table = globals.raw_get("__sleep_queue")
                             .map_err(|e| specific_runtime!(e))?;

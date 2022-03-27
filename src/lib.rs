@@ -1,7 +1,7 @@
 use auxtools::{hook, runtime, shutdown, DMResult, List, Proc, Runtime};
 use lua::{
-    AuxluaError, GlobalWrapper, DATUM_CALL_PROC_WRAPPER, GLOBAL_CALL_PROC_WRAPPER,
-    LUA_THREAD_START, SET_VAR_WRAPPER, DMValue, MluaValue,
+    AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
+    GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, SET_VAR_WRAPPER,
 };
 use mlua::{FromLua, Function, Lua, MetaMethod, MultiValue, Table, Thread, ThreadStatus, ToLua};
 use std::cell::RefCell;
@@ -282,9 +282,7 @@ fn new_state() {
     let state_hash: String = format!("{:p}", &new_state);
     apply_state_vars(&new_state, state_hash.clone())?;
     STATES.with(|states| {
-        states
-            .borrow_mut()
-            .insert(state_hash.clone(), new_state);
+        states.borrow_mut().insert(state_hash.clone(), new_state);
         Ok(DMValue::from_string(state_hash).unwrap())
     })
 }
@@ -619,20 +617,18 @@ fn awaken(state: DMValue) {
                     yield_table.raw_remove(1)?;
                     Ok(Thread::from_lua(table_item, lua_state).ok())
                 })
-                .and_then(|possible_thread: Option<Thread>| {
-                    match possible_thread {
-                        None => Ok(DMValue::null()),
-                        Some(coroutine) => {
-                            LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
-                            let result = coroutine.resume(mlua::Nil);
-                            let status = coroutine.status();
-                            let task_info: Table = globals.raw_get("__task_info")?;
-                            let this_tasks_info: Table = task_info.raw_get(coroutine.clone())?;
-                            let name: String = this_tasks_info.raw_get("name")?;
-                            let yield_index =
-                                handle_coroutine_return(lua_state, coroutine, name.clone())?;
-                            coroutine_result((status, result, yield_index, name), lua_state)
-                        }
+                .and_then(|possible_thread: Option<Thread>| match possible_thread {
+                    None => Ok(DMValue::null()),
+                    Some(coroutine) => {
+                        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+                        let result = coroutine.resume(mlua::Nil);
+                        let status = coroutine.status();
+                        let task_info: Table = globals.raw_get("__task_info")?;
+                        let this_tasks_info: Table = task_info.raw_get(coroutine.clone())?;
+                        let name: String = this_tasks_info.raw_get("name")?;
+                        let yield_index =
+                            handle_coroutine_return(lua_state, coroutine, name.clone())?;
+                        coroutine_result((status, result, yield_index, name), lua_state)
                     }
                 })
                 .or_else(|e| Ok(DMValue::from_string(format!("{}", e)).unwrap()))
@@ -746,8 +742,7 @@ fn kill_task(state: DMValue, task_info: DMValue) {
                 .find(|(_, info)| {
                     for info_pair in info.clone().pairs::<MluaValue, MluaValue>().flatten() {
                         let (key, value) = info_pair;
-                        if let Ok(info_value) =
-                            target_task_info_table.raw_get::<_, MluaValue>(key)
+                        if let Ok(info_value) = target_task_info_table.raw_get::<_, MluaValue>(key)
                         {
                             return info_value == value;
                         }

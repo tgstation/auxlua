@@ -65,8 +65,7 @@ impl Display for AuxluaError {
 impl Error for AuxluaError {}
 
 impl AuxluaError {
-    pub fn new_from_str(s: &str) -> Self
-    {
+    pub fn new_from_str(s: &str) -> Self {
         Self(String::from(s))
     }
 }
@@ -194,9 +193,9 @@ fn datum_call_proc<'lua>(
     args: MultiValue<'lua>,
 ) -> mlua::Result<Value> {
     let mut args_iter = args.into_iter();
-    let first_arg: MluaValue<'lua> = args_iter
-        .next()
-        .ok_or_else(|| external!("attempted call with 0 arguments (expected proc name and 0+ proc arguments)"))?;
+    let first_arg: MluaValue<'lua> = args_iter.next().ok_or_else(|| {
+        external!("attempted call with 0 arguments (expected proc name and 0+ proc arguments)")
+    })?;
     let proc = String::from_lua(first_arg, lua)?;
     let proc_args =
         args_iter.try_fold::<_, _, mlua::Result<_>>(Vec::<Value>::new(), |mut acc, val| {
@@ -214,19 +213,9 @@ fn datum_call_proc<'lua>(
             let wrapper_proc = Proc::find(wrapper_name)
                 .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
             let wrapped_args = &DMValue::from(List::from_iter(converted));
-            wrapper_proc.call(&[
-                datum,
-                &DMValue::from_string(proc).unwrap(),
-                wrapped_args,
-            ])
+            wrapper_proc.call(&[datum, &DMValue::from_string(proc).unwrap(), wrapped_args])
         }
-        None => datum.call(
-            proc,
-            converted
-                .iter()
-                .collect::<Vec<&DMValue>>()
-                .as_slice(),
-        ),
+        None => datum.call(proc, converted.iter().collect::<Vec<&DMValue>>().as_slice()),
     });
     match call_result {
         Ok(ret) => Value::try_from(&ret).map_err(|e| external!(e.message)),
@@ -374,10 +363,7 @@ pub fn global_proc_call<'a>(lua: &'a mlua::Lua, args: MultiValue<'a>) -> mlua::R
             let wrapper_proc = Proc::find(wrapper_name)
                 .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
             let wrapped_args = &DMValue::from(List::from_iter(converted));
-            wrapper_proc.call(&[
-                &DMValue::from_string(proc_name).unwrap(),
-                wrapped_args,
-            ])
+            wrapper_proc.call(&[&DMValue::from_string(proc_name).unwrap(), wrapped_args])
         }
         None => {
             if !proc_name.starts_with("/proc/") {
@@ -385,12 +371,7 @@ pub fn global_proc_call<'a>(lua: &'a mlua::Lua, args: MultiValue<'a>) -> mlua::R
             }
             let proc =
                 Proc::find(proc_name.clone()).ok_or_else(|| runtime!("{} not found", proc_name))?;
-            proc.call(
-                converted
-                    .iter()
-                    .collect::<Vec<&DMValue>>()
-                    .as_slice(),
-            )
+            proc.call(converted.iter().collect::<Vec<&DMValue>>().as_slice())
         }
     });
     match call_result {

@@ -38,7 +38,7 @@ The [Rust] compiler:
 
 The [Cargo] tool handles compilation, as well as automatically downloading and
 compiling all Rust dependencies. The default configuration is suitable for
-use with and BYOND project. To compile in release mode (recommended for
+use with any BYOND project. To compile in release mode (recommended for
 speed):
 
 Linux:

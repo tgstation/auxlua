@@ -32,20 +32,6 @@
 	CRASH("auxlua not loaded")
 
 /**
- * Sets a global proc to call in place of require
- *
- * The proc will be called with the name of the package to load as its only argument
- * The proc should return lua source code.
- * If the proc runtimes or returns something other than text, auxlua will fall back
- * on the original require function, whose built-in searchers will search through
- * the current working directory of the Dream Daemon process.
- *
- * required wrapper text the name of the proc to use as the wrapper
- */
-/proc/__lua_set_require_wrapper(wrapper)
-	CRASH("auxlua not loaded")
-
-/**
  * Sets the maximum amount of time a lua chunk or function can execute without sleeping or yielding.
  * Chunks/functions that exceed this duration will produce an error.
  * 

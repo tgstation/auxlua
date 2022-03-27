@@ -2,7 +2,7 @@
 image = "rustembedded/cross:i686-pc-windows-gnu"
 
 [target.i686-unknown-linux-gnu]
-image = "rustg/i686-unknown-linux-gnu"
+image = "auxlua/i686-unknown-linux-gnu"
 
 [build.env]
 passthrough = [

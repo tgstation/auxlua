@@ -47,7 +47,7 @@ fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> LuaResult<MluaValue<'l
 }
 
 /// Gets the sleep flag
-fn get_sleep_flag<'lua>(lua: &'lua Lua) -> mlua::Result<MluaValue<'lua>> {
+fn get_sleep_flag(lua: &Lua) -> mlua::Result<MluaValue> {
     lua.globals().raw_get("__sleep_flag")
 }
 

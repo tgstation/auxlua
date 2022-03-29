@@ -65,13 +65,11 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let globals = state.globals();
 
     // Create and populate the dm table, which provides hooks into BYOND
-
     let dm_table = state
         .create_table()
         .map_err(|e| specific_runtime!("{}", e))?;
 
     // `world`, a wrapper for dm's `world`
-
     let world = state
         .create_userdata(GlobalWrapper::new(DMValue::world()))
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -80,7 +78,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .map_err(|e| specific_runtime!("{}", e))?;
 
     // `global_vars`, a wrapper for dm's `global`
-
     let dm_globals = state
         .create_userdata(GlobalWrapper::new(DMValue::globals()))
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -89,7 +86,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .map_err(|e| specific_runtime!("{}", e))?;
 
     // `global_proc`, a function that calls `/proc/[proc]`
-
     let global_proc = state
         .create_function(lua::global_proc_call)
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -97,12 +93,23 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .raw_set("global_proc", global_proc)
         .map_err(|e| specific_runtime!("{}", e))?;
 
+    // `state_id`, the key of the state in the global hashmap
+    dm_table
+        .raw_set("state_id", id)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
+    globals
+        .raw_set("dm", dm_table)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
+    // Create the functions and data structures related to task management
+
     // `__set_sleep_flag`, a function that designates that a
     // yielding thread is to be resumed as soon as possible
     let set_sleep_flag = state
         .create_function(set_sleep_flag)
         .map_err(|e| specific_runtime!("{}", e))?;
-    dm_table
+    globals
         .raw_set("__set_sleep_flag", set_sleep_flag)
         .map_err(|e| specific_runtime!("{}", e))?;
 
@@ -120,18 +127,8 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         )
         .eval()
         .map_err(|e| specific_runtime!("{}", e))?;
-    dm_table
-        .raw_set("sleep", sleep)
-        .map_err(|e| specific_runtime!("{}", e))?;
-
-    // `state_id`, the key of the state in the global hashmap
-
-    dm_table
-        .raw_set("state_id", id)
-        .map_err(|e| specific_runtime!("{}", e))?;
-
     globals
-        .raw_set("dm", dm_table)
+        .raw_set("sleep", sleep)
         .map_err(|e| specific_runtime!("{}", e))?;
 
     // Create the task info table, used to store information about

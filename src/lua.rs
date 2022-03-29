@@ -197,24 +197,31 @@ fn datum_call_proc<'lua>(
         external!("attempted call with 0 arguments (expected proc name and 0+ proc arguments)")
     })?;
     let proc = String::from_lua(first_arg, lua)?;
+
+    // Try to convert the args into intermediary value structs
     let proc_args =
         args_iter.try_fold::<_, _, mlua::Result<_>>(Vec::<Value>::new(), |mut acc, val| {
             let arg = Value::from_lua(val, lua)?;
             acc.push(arg);
             Ok(acc)
         })?;
+
+    // Try to convert the intermediary values into DM values
     let converted: Vec<DMValue> = proc_args
         .into_iter()
         .map(DMValue::try_from)
         .collect::<Result<Vec<DMValue>, Runtime>>()
         .map_err(|e| external!(e.message))?;
+
     let call_result = DATUM_CALL_PROC_WRAPPER.with(|wrapper| match &*wrapper.borrow() {
+        // If there is a wrapper proc, call it
         Some(wrapper_name) => {
             let wrapper_proc = Proc::find(wrapper_name)
                 .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
             let wrapped_args = &DMValue::from(List::from_iter(converted));
             wrapper_proc.call(&[datum, &DMValue::from_string(proc).unwrap(), wrapped_args])
         }
+        // If there is no wrapper proc, directly call the proc with the args
         None => datum.call(proc, converted.iter().collect::<Vec<&DMValue>>().as_slice()),
     });
     match call_result {
@@ -225,14 +232,17 @@ fn datum_call_proc<'lua>(
 
 fn datum_set_var(datum: &DMValue, var: String, value: Value) -> DMResult<()> {
     DMValue::from_string(var).and_then(|var_string| {
+        // Convert the value to DM
         let value = &DMValue::try_from(value)?;
         SET_VAR_WRAPPER.with(|wrapper| match &*wrapper.borrow() {
+            // If there is a wrapper proc, call it
             Some(wrapper_proc) => {
                 match DMValue::globals().call(wrapper_proc, &[datum, &var_string, value]) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(specific_runtime!(e.message)),
                 }
             }
+            // If not, directly set the var
             None => datum.set(StringRef::from_value(var_string).unwrap(), value),
         })
     })
@@ -343,29 +353,39 @@ impl GlobalWrapper {
 
 pub fn global_proc_call<'a>(lua: &'a mlua::Lua, args: MultiValue<'a>) -> mlua::Result<Value> {
     let mut args_iter = args.into_iter();
-    let first_arg: MluaValue<'a> = args_iter
-        .next()
-        .ok_or_else(|| external!("attempted call with 0 arguments"))?;
+
+    // Convert the first arg into a string.
+    let first_arg: MluaValue<'a> = args_iter.next().ok_or_else(|| {
+        external!("attempted call with 0 arguments (expected proc name and 0+ proc arguments)")
+    })?;
     let mut proc_name = String::from_lua(first_arg, lua)?;
+
+    // Convert the rest of the args into intermediary value structs
     let proc_args =
         args_iter.try_fold::<_, _, mlua::Result<_>>(Vec::<Value>::new(), |mut acc, val| {
             let arg = Value::from_lua(val, lua)?;
             acc.push(arg);
             Ok(acc)
         })?;
+
+    // Convert the intermediary values into DM values
     let converted: Vec<DMValue> = proc_args
         .into_iter()
         .map(DMValue::try_from)
         .collect::<Result<Vec<DMValue>, Runtime>>()
         .map_err(|e| external!(e.message))?;
+
     let call_result = GLOBAL_CALL_PROC_WRAPPER.with(|wrapper| match &*wrapper.borrow() {
+        // If there is a wrapper proc, call it
         Some(wrapper_name) => {
             let wrapper_proc = Proc::find(wrapper_name)
                 .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
             let wrapped_args = &DMValue::from(List::from_iter(converted));
             wrapper_proc.call(&[&DMValue::from_string(proc_name).unwrap(), wrapped_args])
         }
+        // If not, directly call the proc
         None => {
+            // So that both "/proc/proc_name" and "proc_name" are valid syntaxes
             if !proc_name.starts_with("/proc/") {
                 proc_name.insert_str(0, "/proc/");
             }
@@ -426,7 +446,7 @@ impl PartialEq for Value {
             Self::String(s) => matches!(other, Self::String(s2) if s == s2),
             Self::ListRef(l) => match other {
                 Self::ListRef(l2) => l == l2,
-                Self::Datum(w) => l.clone() == w.upgrade_or_null(),
+                Self::Datum(w) => l == &w.upgrade_or_null(),
                 Self::Global(g) => l == g,
                 Self::Other(o) => l == o,
                 _ => false,
@@ -436,22 +456,22 @@ impl PartialEq for Value {
                 _ => false,
             },
             Self::Datum(w) => match other {
-                Self::ListRef(l) => w.upgrade_or_null() == l.clone(),
+                Self::ListRef(l) => &w.upgrade_or_null() == l,
                 Self::Datum(w2) => w.upgrade_or_null() == w2.upgrade_or_null(),
-                Self::Global(g) => w.upgrade_or_null() == g.clone(),
-                Self::Other(o) => w.upgrade_or_null() == o.clone(),
+                Self::Global(g) => &w.upgrade_or_null() == g,
+                Self::Other(o) => &w.upgrade_or_null() == o,
                 _ => false,
             },
             Self::Global(g) => match other {
                 Self::ListRef(l) => g == l,
-                Self::Datum(w) => g.clone() == w.upgrade_or_null(),
+                Self::Datum(w) => g == &w.upgrade_or_null(),
                 Self::Global(g2) => g == g2,
                 Self::Other(o) => g == o,
                 _ => false,
             },
             Self::Other(o) => match other {
                 Self::ListRef(l) => o == l,
-                Self::Datum(w) => o.clone() == w.upgrade_or_null(),
+                Self::Datum(w) => o == &w.upgrade_or_null(),
                 Self::Global(g) => o == g,
                 Self::Other(o2) => o == o2,
                 _ => false,
@@ -549,7 +569,7 @@ impl<'lua> FromLua<'lua> for Value {
         };
         match value {
             MluaValue::Nil => Ok(Self::Null),
-            MluaValue::Boolean(b) => Ok(Self::Number(if b { 1.0 } else { 2.0 })),
+            MluaValue::Boolean(b) => Ok(Self::Number(if b { 1.0 } else { 0.0 })),
             MluaValue::Integer(i) => Ok(Self::Number(i as f32)),
             MluaValue::Number(n) => Ok(Self::Number(n as f32)),
             MluaValue::String(s) => Ok(Self::String(String::from(s.to_str()?))),

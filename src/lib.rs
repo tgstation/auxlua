@@ -1,4 +1,4 @@
-use auxtools::{hook, runtime, shutdown, DMResult, List, Proc, Runtime};
+use auxtools::{hook, runtime, shutdown, DMResult, List, Runtime};
 use lua::{
     AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
     GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, SET_VAR_WRAPPER,
@@ -12,6 +12,18 @@ use std::time::Instant;
 pub mod lua;
 
 type LuaModValue = lua::Value;
+type LuaResult<T> = mlua::Result<T>;
+
+macro_rules! err_as_string {
+    ($expr:expr) => {
+        match $expr {
+            Ok(ok) => ok,
+            Err(err) => {
+                return DMValue::from_string(format!("{},{}: {}", std::file!(), std::line!(), err))
+            }
+        }
+    };
+}
 
 thread_local! {
     /// A hashmap of all created states, used for accessing individual states
@@ -20,15 +32,12 @@ thread_local! {
 
     /// A CPU usage limit in milliseconds for each run of lua code
     pub static EXECUTION_LIMIT: RefCell<u128> = RefCell::new(100);
-
-    /// The path string of a DM proc to call first when calling `require` from lua
-    pub static REQUIRE_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
 }
 
 /// This function is guaranteed to return the first border of a table, unlike the default
 /// \# operator, which can return any border depending on factors such as the order
 /// of table initializations.
-fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> mlua::Result<MluaValue<'lua>> {
+fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> LuaResult<MluaValue<'lua>> {
     for i in 0..i32::MAX {
         if !this.contains_key(i + 1)? {
             return Ok(MluaValue::Integer(i));
@@ -37,26 +46,18 @@ fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> mlua::Result<MluaValue
     Ok(MluaValue::Integer(i32::MAX))
 }
 
-fn wrap_require(lua: &Lua, name: String) -> mlua::Result<MluaValue> {
-    let wrapper_result: Option<String> = REQUIRE_WRAPPER.with(|wrapper| {
-        let wrapper_proc = Proc::find((wrapper.borrow().as_ref())?)?;
-        let result = wrapper_proc
-            .call(&[&DMValue::from_string(name.clone()).unwrap()])
-            .ok()?;
-        result.as_string().ok()
-    });
-    if let Some(loader) = wrapper_result {
-        let chunk = lua.load(&loader).set_environment(lua.globals())?;
-        let evaluated_loader = chunk.eval()?;
-        if let MluaValue::Function(f) = evaluated_loader {
-            f.call(name)
-        } else {
-            Ok(evaluated_loader)
-        }
-    } else {
-        let require: Function = lua.globals().raw_get("__require")?;
-        require.call(name)
-    }
+/// Gets the sleep flag
+fn get_sleep_flag<'lua>(lua: &'lua Lua) -> mlua::Result<MluaValue<'lua>> {
+    lua.globals().raw_get("__sleep_flag")
+}
+
+/// Sets the sleep flag
+fn set_sleep_flag<'lua>(lua: &'lua Lua, enabled: MluaValue<'lua>) -> mlua::Result<()> {
+    let globals = lua.globals();
+    globals.set_readonly(false);
+    globals.raw_set("__sleep_flag", enabled)?;
+    globals.set_readonly(true);
+    Ok(())
 }
 
 /// Applies auxlua-specific data structures to the lua state
@@ -96,15 +97,24 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .raw_set("global_proc", global_proc)
         .map_err(|e| specific_runtime!("{}", e))?;
 
+    // `__set_sleep_flag`, a function that designates that a
+    // yielding thread is to be resumed as soon as possible
+    let set_sleep_flag = state
+        .create_function(set_sleep_flag)
+        .map_err(|e| specific_runtime!("{}", e))?;
+    dm_table
+        .raw_set("__set_sleep_flag", set_sleep_flag)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
     // `sleep`, a function that yields a thread to be resumed
     // as soon as possible
 
     let sleep: Function = state
         .load(
             r#"function()
-        __sleep_flag = true
+        __set_sleep_flag(true)
         coroutine.yield()
-        __sleep_flag = nil
+        __set_sleep_flag(nil)
         return
     end"#,
         )
@@ -120,8 +130,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .raw_set("state_id", id)
         .map_err(|e| specific_runtime!("{}", e))?;
 
-    dm_table.set_readonly(true);
-
     globals
         .raw_set("dm", dm_table)
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -132,7 +140,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let task_info = state
         .create_table()
         .map_err(|e| specific_runtime!("{}", e))?;
-    task_info.set_readonly(true);
     globals
         .raw_set("__task_info", task_info)
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -142,7 +149,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let sleep_queue = state
         .create_table()
         .map_err(|e| specific_runtime!("{}", e))?;
-    sleep_queue.set_readonly(true);
     globals
         .raw_set("__sleep_queue", sleep_queue)
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -157,38 +163,27 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let yield_len = state
         .create_function(first_border)
         .map_err(|e| specific_runtime!(e))?;
+
+    // Set the yield table's __len metamethod to the function
+    // that gets the first border
     yield_metatable
         .raw_set("__len", yield_len)
         .map_err(|e| specific_runtime!(e))?;
-    yield_metatable.set_readonly(true);
     yield_table.set_metatable(Some(yield_metatable));
-    yield_table.set_readonly(true);
     globals
         .raw_set("__yield_table", yield_table)
         .map_err(|e| specific_runtime!("{}", e))?;
 
-    let original_require: Function = globals
-        .raw_get("require")
+    // Set the exhaustion check as the interrupt handler
+    state
+        .set_interrupt(exhaustion_check)
         .map_err(|e| specific_runtime!("{}", e))?;
-    globals
-        .raw_set("__require", original_require)
-        .map_err(|e| specific_runtime!("{}", e))?;
-    let require = state
-        .create_function(wrap_require)
-        .map_err(|e| specific_runtime!("{}", e))?;
-    globals
-        .raw_set("_require", require)
-        .map_err(|e| specific_runtime!("{}", e))?;
-    let require_wrapper = state
-        .create_function::<_, MluaValue, _>(|lua: &Lua, name: String| {
-            let require: Function = lua.globals().raw_get("_require")?;
-            lua.load_from_function(&name, require)
-        })
-        .map_err(|e| specific_runtime!("{}", e))?;
-    globals
-        .raw_set("require", require_wrapper)
-        .map_err(|e| specific_runtime!("{}", e))?;
+    // Sandbox the state, making the global table and all its subtables readonly
+    state.sandbox().map_err(|e| specific_runtime!("{}", e))?;
 
+    // Create the environment, separating the list of "globals"
+    // created by scripts from the actual global table while
+    // still allowing the global environment to be accessed.
     let environment = state
         .create_table()
         .map_err(|e| specific_runtime!("{}", e))?;
@@ -200,18 +195,19 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .map_err(|e| specific_runtime!("{}", e))?;
     env_metatable.set_readonly(true);
     environment.set_metatable(Some(env_metatable));
+
+    // Temporarily set the environment to not readonly so that we can
+    // add the not-readonly environment table to the global table
+    globals.set_readonly(false);
     globals
         .raw_set("env", environment)
         .map_err(|e| specific_runtime!("{}", e))?;
-    state
-        .set_interrupt(exhaustion_check)
-        .map_err(|e| specific_runtime!("{}", e))?;
-    state.sandbox().map_err(|e| specific_runtime!("{}", e))?;
+    globals.set_readonly(true);
     Ok(())
 }
 
 /// A CPU limiter for lua states.
-fn exhaustion_check(_: &Lua) -> mlua::Result<()> {
+fn exhaustion_check(_: &Lua) -> LuaResult<()> {
     LUA_THREAD_START.with(|start| {
         EXECUTION_LIMIT.with(|limit| {
             if start.borrow().elapsed().as_millis() > *limit.borrow() {
@@ -225,6 +221,9 @@ fn exhaustion_check(_: &Lua) -> mlua::Result<()> {
     })
 }
 
+/// Sets the proc path to call when setting
+/// a datum's vars using the lua function
+/// `datum:set_var`
 #[hook("/proc/__lua_set_set_var_wrapper")]
 fn set_set_var_wrapper(wrapper: DMValue) {
     wrapper.as_string().and_then(|wrapper_string| {
@@ -235,6 +234,9 @@ fn set_set_var_wrapper(wrapper: DMValue) {
     })
 }
 
+/// Sets the proc path to call when calling
+/// a datum's proc using the lua function
+/// `datum:call_proc`
 #[hook("/proc/__lua_set_datum_proc_call_wrapper")]
 fn set_datum_proc_call_wrapper(wrapper: DMValue) {
     wrapper.as_string().and_then(|wrapper_string| {
@@ -245,6 +247,9 @@ fn set_datum_proc_call_wrapper(wrapper: DMValue) {
     })
 }
 
+/// Sets the proc path to call when calling
+/// a global proc using the lua function
+/// `dm.global_proc`
 #[hook("/proc/__lua_set_global_proc_call_wrapper")]
 fn set_global_proc_call_wrapper(wrapper: DMValue) {
     wrapper.as_string().and_then(|wrapper_string| {
@@ -255,16 +260,8 @@ fn set_global_proc_call_wrapper(wrapper: DMValue) {
     })
 }
 
-#[hook("/proc/__lua_set_require_wrapper")]
-fn set_require_wrapper(wrapper: DMValue) {
-    wrapper.as_string().and_then(|wrapper_string| {
-        REQUIRE_WRAPPER.with(|wrapper| {
-            *wrapper.borrow_mut() = Some(wrapper_string);
-            Ok(DMValue::null())
-        })
-    })
-}
-
+/// Sets the CPU usage limit, in milliseconds,
+/// of each call to lua code
 #[hook("/proc/__lua_set_execution_limit")]
 fn set_execution_limit(limit: DMValue) {
     limit.as_number().and_then(|limit_num| {
@@ -275,11 +272,14 @@ fn set_execution_limit(limit: DMValue) {
     })
 }
 
+/// Creates a new lua state, initializes its variables,
+/// and stores it in the `HashMap` of states
 #[hook("/proc/__lua_new_state")]
 fn new_state() {
     let new_state = Lua::new_with(mlua::StdLib::ALL_SAFE, mlua::LuaOptions::default())
         .map_err(|e| specific_runtime!("{}", e))?;
-    let state_hash: String = format!("{:p}", &new_state);
+    let state_ref = &new_state;
+    let state_hash: String = format!("{state_ref:p}");
     apply_state_vars(&new_state, state_hash.clone())?;
     STATES.with(|states| {
         states.borrow_mut().insert(state_hash.clone(), new_state);
@@ -287,11 +287,12 @@ fn new_state() {
     })
 }
 
+/// Looks for the task information corresponding to a lua thread
 fn get_task_table_info<'lua, S>(
     lua: &'lua Lua,
     coroutine: Thread<'lua>,
     name: S,
-) -> mlua::Result<Table<'lua>>
+) -> LuaResult<Table<'lua>>
 where
     S: Into<String>,
 {
@@ -307,88 +308,139 @@ where
     })
 }
 
-fn handle_coroutine_return<T>(lua: &Lua, coroutine: Thread, name: T) -> mlua::Result<i32>
+/// Handles storing and updating a thread's task info when it yields or finishes
+fn handle_coroutine_return<T>(lua: &Lua, coroutine: Thread, name: T) -> LuaResult<i32>
 where
     T: Into<String>,
 {
     let globals = lua.globals();
     let task_info_table: Table = lua.globals().raw_get("__task_info")?;
+
+    // Set the task info table to not readonly - we will be modifying it
     task_info_table.set_readonly(false);
     if coroutine.status() == ThreadStatus::Resumable {
+        // Check the sleep flag
         let sleep_flag: MluaValue = globals
             .raw_get("__sleep_flag")
             .map_err(|e| specific_external!(e))?;
         if sleep_flag == mlua::Nil {
+            // This is a yield -  get the yield table
             let yield_table: Table = globals
                 .raw_get("__yield_table")
                 .map_err(|e| specific_external!(e))?;
+
+            // Set the yield table to not readonly - we will be modifying it
             yield_table.set_readonly(false);
+
+            // Get the first border - this is where the thread will be put in the yield table
             let first_border = yield_table.len().map_err(|e| specific_external!(e))?;
+
+            // Put the thread in the yield table
             yield_table
                 .raw_set(first_border + 1, coroutine.clone())
                 .map_err(|e| specific_external!(e))?;
+
+            // Get or create the task info for this thread
             let task_info = get_task_table_info(lua, coroutine, name)?;
+
+            // Set the task info to not readonly - we will be modifying it
             task_info.set_readonly(false);
+
+            // Modify the task info
             task_info.raw_set("status", "yield")?;
             task_info.raw_set("index", first_border + 1)?;
+
+            // Set the task info to readonly - we are done modifying it
             task_info.set_readonly(true);
+
+            // Set the yield table to readonly - we are done modifying it
             yield_table.set_readonly(true);
             return Ok(first_border + 1);
         } else {
+            // This is a sleep - get the sleep queue
             let sleep_queue: Table = globals
                 .raw_get("__sleep_queue")
                 .map_err(|e| specific_external!(e))?;
+
+            // Set the sleep queue to not readonly - we will be modifying it
             sleep_queue.set_readonly(false);
+
+            // Get the length of the sleep queue - this is the index the thread will be at
             let queue_len = sleep_queue.raw_len();
+
+            // Enqueue the thread into the sleep queue
             sleep_queue
                 .raw_set(queue_len + 1, coroutine.clone())
                 .map_err(|e| specific_external!(e))?;
+
+            // Get or create the task info for this thread
             let task_info = get_task_table_info(lua, coroutine, name)?;
+
+            // Set the task info to not readonly - we will be modifying it
             task_info.set_readonly(false);
+
+            // Modify the task info
             task_info.raw_set("status", "sleep")?;
             task_info.raw_set("index", queue_len + 1)?;
+
+            // Set the task info to readonly - we are done modifying it
             task_info.set_readonly(true);
+
+            // Set the sleep queue to readonly - we are done modifying it
             sleep_queue.set_readonly(true);
             return Ok(0);
         }
     } else {
+        // The task cannot be resumed - remove it from the info table
         task_info_table.raw_remove(coroutine)?;
     }
+
+    // Set the task info table to readonly - we're done modifying it
     task_info_table.set_readonly(true);
     Ok(0)
 }
 
+// Loads a snippet of lua source code
 #[hook("/proc/__lua_load")]
 fn load(state: DMValue, script: DMValue, name: DMValue) {
     let key = state.as_string()?;
     let script_text = script.as_string()?;
-    let name = name.as_string().ok();
+
+    // Use this name for the logging and debugging of this chunk
+    let name = name.as_string().unwrap_or_else(|_| String::from("input"));
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow_mut().get_mut(&key) {
-            lua_state
-                .globals()
-                .raw_get("env")
-                .and_then(|env: Table| lua_state.load(&script_text).set_environment(env))
-                .and_then(|chunk| match name.clone() {
-                    Some(name_string) => chunk.set_name(&name_string),
-                    None => Ok(chunk),
-                })
-                .and_then(|chunk| chunk.into_function())
-                .and_then(|chunk_func| lua_state.create_thread(chunk_func))
-                .and_then(|coroutine| {
-                    LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
-                    let ret: mlua::Result<MultiValue> = coroutine.resume(mlua::Nil);
-                    let status = coroutine.status();
-                    let task_name = name.unwrap_or_else(|| String::from("input"));
-                    let yield_index =
-                        handle_coroutine_return(lua_state, coroutine, task_name.clone())?;
-                    Ok((status, ret, yield_index, task_name))
-                })
-                .and_then(|res| coroutine_result(res, lua_state))
-                .or_else(|e| Ok(DMValue::from_string(format!("{}", e)).unwrap()))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
-        }
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+
+        // Get the environment table
+        let globals = lua_state.globals();
+        let environment: Table = globals.raw_get("env").map_err(|e| specific_runtime!(e))?;
+
+        // Load the chunk and set its environment and name
+        let mut chunk = lua_state.load(&script_text);
+        chunk = chunk
+            .set_environment(environment)
+            .map_err(|e| specific_runtime!(e))?;
+        chunk = chunk.set_name(&name).map_err(|e| specific_runtime!(e))?;
+
+        // Wrap the chunk in a function and create a thread from that function
+        let wrapped_function = chunk.into_function().map_err(|e| specific_runtime!(e))?;
+        let coroutine = lua_state
+            .create_thread(wrapped_function)
+            .map_err(|e| specific_runtime!(e))?;
+
+        // Run the thread
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+        let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Nil);
+
+        // Handle the result
+        let status = coroutine.status();
+        let yield_index = handle_coroutine_return(lua_state, coroutine, &name)
+            .map_err(|e| specific_runtime!(e))?;
+        coroutine_result((status, ret, yield_index, name), lua_state)
+            .map_err(|e| specific_runtime!(e))
     })
 }
 
@@ -396,38 +448,49 @@ fn load(state: DMValue, script: DMValue, name: DMValue) {
 fn get_globals(state: DMValue) {
     let key = state.as_string()?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let ret: List = List::new();
-            let env: Table = lua_state
-                .globals()
-                .raw_get("env")
-                .map_err(|e| specific_runtime!("{}", e))?;
-            for pair in env.pairs().filter_map(Result::ok) {
-                let (table_key, value): (MluaValue, MluaValue) = pair;
-                let key_string = DMValue::from_string(
-                    String::from_lua(table_key, lua_state)
-                        .map_err(|e| specific_runtime!("{}", e))?,
-                )
-                .map_err(|e| specific_runtime!(e.message))?;
-                let val_clone = value.clone();
-                if let Ok(dm_value) = LuaModValue::from_lua(val_clone, lua_state) {
-                    let arg = DMValue::try_from(dm_value)?;
-                    ret.set(key_string, arg)?;
-                } else {
-                    let typename = value.type_name();
-                    let mut typename_string = String::from(typename);
-                    // prefix the typename to specify that this is an abstraction of a
-                    // type not convertible to DM
-                    typename_string.insert_str(0, "__lua_");
-                    let value_typename = DMValue::from_string(typename_string)
-                        .map_err(|e| specific_runtime!(e.message))?;
-                    ret.set(key_string, value_typename)?;
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+
+        // Create the list we will return
+        let ret: List = List::new();
+
+        // Get the environment table
+        let env: Table = lua_state
+            .globals()
+            .raw_get("env")
+            .map_err(|e| specific_runtime!("{}", e))?;
+
+        // Iterate through the environment table
+        for pair in env.pairs().filter_map(Result::ok) {
+            let (table_key, value): (MluaValue, MluaValue) = pair;
+
+            // Try to convert the table key into a DM value
+            let key_value = match LuaModValue::from_lua(table_key.clone(), lua_state) {
+                Ok(lua_value) => DMValue::try_from(lua_value).unwrap(),
+                Err(_) => {
+                    // Cannot directly convert - represent as type name and pointer
+                    let typename = table_key.type_name();
+                    let key_ref = &table_key;
+                    DMValue::from_string(format!("{typename}: {key_ref:p}")).unwrap()
                 }
+            };
+
+            // Try to convert the value to a DM value
+            if let Ok(dm_value) = LuaModValue::from_lua(value.clone(), lua_state) {
+                let val = DMValue::try_from(dm_value).unwrap();
+                ret.set(key_value, val)?;
+            } else {
+                // Cannot directly convert - represent as type name and pointer
+                let typename = value.type_name();
+                let value_ref = &value;
+                let value_string =
+                    DMValue::from_string(format!("{typename}: {value_ref:p}")).unwrap();
+                ret.set(key_value, value_string)?;
             }
-            Ok(DMValue::from(ret))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
         }
+        Ok(DMValue::from(ret))
     })
 }
 
@@ -435,32 +498,40 @@ fn get_globals(state: DMValue) {
 fn get_tasks(state: DMValue) {
     let key = state.as_string()?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let ret: List = List::new();
-            let env: Table = lua_state
-                .globals()
-                .raw_get("__task_info")
-                .map_err(|e| specific_runtime!("{}", e))?;
-            for pair in env.pairs() {
-                if pair.is_ok() {
-                    let (_, value): (Thread, Table) =
-                        pair.map_err(|e| specific_runtime!("{}", e))?;
-                    let info_list = List::new();
-                    for info_pair in value.pairs() {
-                        let (info_key, info_value): (DMValue, DMValue) = info_pair
-                            .map_err(|e| specific_runtime!("{}", e))
-                            .and_then(|(k, v): (LuaModValue, LuaModValue)| {
-                                Ok((DMValue::try_from(k)?, DMValue::try_from(v)?))
-                            })?;
-                        info_list.set(info_key, info_value)?;
-                    }
-                    ret.append(info_list);
-                }
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+
+        // Create the list we will return
+        let ret: List = List::new();
+
+        // Get the task info table
+        let task_info: Table = lua_state
+            .globals()
+            .raw_get("__task_info")
+            .map_err(|e| specific_runtime!("{}", e))?;
+
+        // Iterate through the task info table
+        for pair in task_info.pairs().filter_map(Result::ok) {
+            let (_, value): (Thread, Table) = pair;
+
+            // Each task info entry is returned as its own assoc list
+            let info_list = List::new();
+
+            // Populate the list for the task info entry
+            for info_pair in value.pairs() {
+                let (info_key, info_value): (DMValue, DMValue) = info_pair.map_or_else(
+                    |e| Err(specific_runtime!("{}", e)),
+                    |(k, v): (LuaModValue, LuaModValue)| {
+                        Ok((DMValue::try_from(k)?, DMValue::try_from(v)?))
+                    },
+                )?;
+                info_list.set(info_key, info_value)?;
             }
-            Ok(DMValue::from(ret))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
+            ret.append(info_list);
         }
+        Ok(DMValue::from(ret))
     })
 }
 
@@ -469,6 +540,8 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
     let key = state
         .as_string()
         .map_err(|e| specific_runtime!(e.message))?;
+
+    // Parse the path from the root of the environment table to the function being called
     let function_path = function
         .as_list()
         .or_else(|_| {
@@ -486,72 +559,85 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         })
         .collect::<DMResult<Vec<LuaModValue>>>()?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let arguments_list = arguments.as_list().unwrap_or_else(|_| List::new());
-            let func_args: Vec<MluaValue> = (1..=arguments_list.len())
-                .map(|i| {
-                    LuaModValue::try_from(&arguments_list.get(i)?)?
-                        .to_lua(lua_state)
-                        .map_err(|e| specific_runtime!(e))
-                })
-                .collect::<Result<Vec<MluaValue>, Runtime>>()?;
-            let function_name: String =
-                mapped_path
-                    .iter()
-                    .try_fold(String::new(), |mut acc, elem| {
-                        if !acc.is_empty() {
-                            acc += ".";
-                        }
-                        let value = elem
-                            .clone()
-                            .to_lua(lua_state)
-                            .map_err(|e| specific_runtime!(e))?;
-                        let token = lua_state.coerce_string(value.clone()).map_or_else(
-                            |_| Ok(String::from(value.type_name())),
-                            |string_opt| {
-                                if let Some(string) = string_opt {
-                                    Ok(String::from(
-                                        string.to_str().map_err(|e| specific_runtime!(e))?,
-                                    ))
-                                } else {
-                                    Ok(String::from("nil"))
-                                }
-                            },
-                        )?;
-                        acc += token.as_str();
-                        Ok(acc)
-                    })?;
-            lua_state
-                .globals()
-                .raw_get("env")
-                .and_then(|env: Table| {
-                    let mut might_be_table_or_func: MluaValue = MluaValue::Table(env);
-                    for token in mapped_path.clone() {
-                        if let MluaValue::Table(t) = might_be_table_or_func {
-                            might_be_table_or_func =
-                                t.get(token).map_err(|e| specific_external!(e))?;
-                        } else {
-                            break;
-                        }
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+
+        // Validate the arguments to the function
+        let arguments_list = arguments.as_list().unwrap_or_else(|_| List::new());
+        let func_args: Vec<MluaValue> = (1..=arguments_list.len())
+            .map(|i| {
+                LuaModValue::try_from(&arguments_list.get(i)?)?
+                    .to_lua(lua_state)
+                    .map_err(|e| specific_runtime!(e))
+            })
+            .collect::<Result<Vec<MluaValue>, Runtime>>()?;
+
+        // Produce a human-readable name for the function
+        let function_name: String =
+            mapped_path
+                .clone()
+                .iter()
+                .try_fold(String::new(), |mut acc, elem| {
+                    if !acc.is_empty() {
+                        acc += ".";
                     }
-                    Function::from_lua(might_be_table_or_func, lua_state)
-                        .map_err(|e| specific_external!(e))
-                })
-                .and_then(|function| lua_state.create_thread(function))
-                .and_then(|coroutine| {
-                    LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
-                    let ret: mlua::Result<MultiValue> =
-                        coroutine.resume(MultiValue::from_vec(func_args));
-                    let status = coroutine.status();
-                    let yield_index =
-                        handle_coroutine_return(lua_state, coroutine, function_name.clone())?;
-                    Ok((status, ret, yield_index, function_name))
-                })
-                .and_then(|res| coroutine_result(res, lua_state))
-                .or_else(|e| Ok(DMValue::from_string(format!("{}", e)).unwrap()))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
+                    let value = elem
+                        .clone()
+                        .to_lua(lua_state)
+                        .map_err(|e| specific_runtime!(e))?;
+                    let token = String::from_lua(value.clone(), lua_state).unwrap_or_else(|_| {
+                        let value_typename = value.type_name();
+                        let value_ref = &value;
+                        format!("{value_typename}: {value_ref:p}")
+                    });
+                    acc += token.as_str();
+                    Ok(acc)
+                })?;
+
+        // Get the environment table
+        let globals = lua_state.globals();
+        let environment: Table = err_as_string!(globals.raw_get("env"));
+
+        // Look for the function at the specified path
+        let mut might_be_table_or_func: MluaValue = MluaValue::Table(environment);
+        for token in mapped_path {
+            if let MluaValue::Table(t) = might_be_table_or_func {
+                might_be_table_or_func = err_as_string!(t.get(token));
+            } else {
+                break;
+            }
         }
+        let function = err_as_string!(Function::from_lua(might_be_table_or_func, lua_state));
+
+        // Store and nil the sleep flag in case the call yields without sleeping
+        let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
+        err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
+
+        // Bind the function in a coroutine and run it
+        let coroutine = err_as_string!(lua_state.create_thread(function));
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+        let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(func_args));
+
+        // Handle the result
+        let status = coroutine.status();
+        let yield_index = err_as_string!(handle_coroutine_return(
+            lua_state,
+            coroutine,
+            &function_name
+        ));
+
+        // Restore the sleep flag if it is still nil
+        let current_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
+        if current_sleep_flag == mlua::Nil {
+            err_as_string!(set_sleep_flag(lua_state, old_sleep_flag))
+        }
+
+        Ok(err_as_string!(coroutine_result(
+            (status, ret, yield_index, function_name),
+            lua_state
+        )))
     })
 }
 
@@ -561,99 +647,130 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         .as_string()
         .map_err(|e| specific_runtime!(e.message))?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let table_index = index
-                .as_number()
-                .map_err(|e| specific_runtime!(e.message))? as i32;
-            let arguments_list = arguments.as_list().unwrap_or_else(|_| List::new());
-            let resume_args: Vec<MluaValue> = (1..=arguments_list.len())
-                .map(|i| {
-                    LuaModValue::try_from(&arguments_list.get(i)?)?
-                        .to_lua(lua_state)
-                        .map_err(|e| specific_runtime!(e))
-                })
-                .collect::<Result<Vec<MluaValue>, Runtime>>()?;
-            let globals = lua_state.globals();
-            globals
-                .raw_get("__yield_table")
-                .and_then(|yield_table: Table| {
-                    let table_item: MluaValue = yield_table.raw_get(table_index)?;
-                    yield_table.raw_set(table_index, mlua::Nil)?;
-                    Ok(Thread::from_lua(table_item, lua_state).ok())
-                })
-                .and_then(|possible_thread: Option<Thread>| match possible_thread {
-                    None => Ok(DMValue::null()),
-                    Some(coroutine) => {
-                        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
-                        let result = coroutine.resume(MultiValue::from_vec(resume_args));
-                        let status = coroutine.status();
-                        let task_info: Table = globals.raw_get("__task_info")?;
-                        let this_tasks_info: Table = task_info.raw_get(coroutine.clone())?;
-                        let name: String = this_tasks_info.raw_get("name")?;
-                        let yield_index =
-                            handle_coroutine_return(lua_state, coroutine, name.clone())?;
-                        coroutine_result((status, result, yield_index, name), lua_state)
-                    }
-                })
-                .or_else(|e| Ok(DMValue::from_string(format!("{}", e)).unwrap()))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+        let table_index = index
+            .as_number()
+            .map_err(|e| specific_runtime!(e.message))? as i32;
+
+        // Validate the arguments
+        let arguments_list = arguments.as_list().unwrap_or_else(|_| List::new());
+        let resume_args: Vec<MluaValue> = (1..=arguments_list.len())
+            .map(|i| {
+                LuaModValue::try_from(&arguments_list.get(i)?)?
+                    .to_lua(lua_state)
+                    .map_err(|e| specific_runtime!(e))
+            })
+            .collect::<Result<Vec<MluaValue>, Runtime>>()?;
+
+        // Get the task from the yield table
+        let globals = lua_state.globals();
+        let yield_table: Table = err_as_string!(globals.raw_get("__yield_table"));
+        let coroutine: Thread = err_as_string!(yield_table.raw_get(table_index));
+
+        // Remove the task from the yield table - if the task yields again,
+        // it will be put back into the yield table by handle_coroutine_return
+        yield_table.set_readonly(false);
+        err_as_string!(yield_table.raw_remove(table_index));
+        yield_table.set_readonly(true);
+
+        // Get the task's name from the task info table
+        let task_info_table: Table = err_as_string!(globals.raw_get("__task_info"));
+        let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
+        let function_name = err_as_string!(this_tasks_info.raw_get("name"));
+
+        // Store and nil the sleep flag in case the resume yields without sleeping
+        let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
+        err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
+
+        // Run the task
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+        let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(resume_args));
+
+        // Handle the task's result
+        let status = coroutine.status();
+        let yield_index = err_as_string!(handle_coroutine_return(
+            lua_state,
+            coroutine,
+            &function_name
+        ));
+
+        // Restore the sleep flag if it is still nil
+        let current_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
+        if current_sleep_flag == mlua::Nil {
+            err_as_string!(set_sleep_flag(lua_state, old_sleep_flag))
         }
+
+        Ok(err_as_string!(coroutine_result(
+            (status, ret, yield_index, function_name),
+            lua_state
+        )))
     })
 }
 
+/// Runs the task at the front of the specified state's sleep queue
 #[hook("/proc/__lua_awaken")]
 fn awaken(state: DMValue) {
     let key = state
         .as_string()
         .map_err(|e| specific_runtime!(e.message))?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let globals = lua_state.globals();
-            globals
-                .raw_get("__sleep_queue")
-                .and_then(|yield_table: Table| {
-                    let table_item: MluaValue = yield_table.raw_get(1)?;
-                    yield_table.raw_remove(1)?;
-                    Ok(Thread::from_lua(table_item, lua_state).ok())
-                })
-                .and_then(|possible_thread: Option<Thread>| match possible_thread {
-                    None => Ok(DMValue::null()),
-                    Some(coroutine) => {
-                        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
-                        let result = coroutine.resume(mlua::Nil);
-                        let status = coroutine.status();
-                        let task_info: Table = globals.raw_get("__task_info")?;
-                        let this_tasks_info: Table = task_info.raw_get(coroutine.clone())?;
-                        let name: String = this_tasks_info.raw_get("name")?;
-                        let yield_index =
-                            handle_coroutine_return(lua_state, coroutine, name.clone())?;
-                        coroutine_result((status, result, yield_index, name), lua_state)
-                    }
-                })
-                .or_else(|e| Ok(DMValue::from_string(format!("{}", e)).unwrap()))
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
-        }
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+
+        // Get the front task of the sleep queue
+        let globals = lua_state.globals();
+        let sleep_queue: Table = err_as_string!(globals.raw_get("__sleep_queue"));
+        let coroutine: Thread = err_as_string!(sleep_queue.raw_get(1));
+
+        // Remove the task from the sleep queue
+        sleep_queue.set_readonly(false);
+        err_as_string!(sleep_queue.raw_remove(1));
+        sleep_queue.set_readonly(true);
+
+        // Get the name of the task
+        let task_info_table: Table = err_as_string!(globals.raw_get("__task_info"));
+        let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
+        let function_name = err_as_string!(this_tasks_info.raw_get("name"));
+
+        // Run the task
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+        let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Value::Nil);
+
+        // Handle the task's result
+        let status = coroutine.status();
+        let yield_index = err_as_string!(handle_coroutine_return(
+            lua_state,
+            coroutine,
+            &function_name
+        ));
+        Ok(err_as_string!(coroutine_result(
+            (status, ret, yield_index, function_name),
+            lua_state
+        )))
     })
 }
 
+/// Actually produces the return value for hooks that run lua code
 fn coroutine_result(
-    (status, ret, yield_index, name): (ThreadStatus, mlua::Result<MultiValue>, i32, String),
+    (status, ret, yield_index, name): (ThreadStatus, LuaResult<MultiValue>, i32, String),
     state: &Lua,
-) -> mlua::Result<DMValue> {
+) -> LuaResult<DMValue> {
     let return_list = &List::new();
-    let status_string = match status {
-        ThreadStatus::Resumable => "yielded",
-        ThreadStatus::Unresumable => "finished",
-        ThreadStatus::Error => "errored",
-    };
+
+    // Put the task's name into the return list
     return_list
         .set(
             DMValue::from_string("name").unwrap(),
             DMValue::from_string(name).unwrap(),
         )
         .unwrap();
+
+    // Only yields have a non-zero yield index
     if yield_index != 0 {
         return_list
             .set(
@@ -662,130 +779,174 @@ fn coroutine_result(
             )
             .unwrap()
     }
+
+    // Create a human-readable status string
+    let status_string = match status {
+        ThreadStatus::Resumable => "yielded",
+        ThreadStatus::Unresumable => "finished",
+        ThreadStatus::Error => "errored",
+    };
+
+    // Put the human-readable status string into the return list
     return_list
         .set(
             DMValue::from_string("status").unwrap(),
             DMValue::from_string(status_string).unwrap(),
         )
         .unwrap();
-    ret.and_then(|values| {
-        let return_value_list = List::new();
-        let sleep_flag: MluaValue = state.globals().raw_get("__sleep_flag")?;
-        if sleep_flag != mlua::Nil && status == ThreadStatus::Resumable {
-            return_list
-                .set(
-                    DMValue::from_string("status").unwrap(),
-                    DMValue::from_string("sleeping").unwrap(),
-                )
-                .unwrap();
-            return Ok(DMValue::from(return_list));
+
+    // Parse the result of the task
+    let parsed_result = match ret {
+        // Pass on the error
+        Err(e) => Err(e),
+        Ok(return_values) => {
+            // Convert the return values to DM values
+            let return_value_list = List::new();
+            return_values
+                .into_iter()
+                .try_for_each(|return_value| {
+                    let intermediary_value = LuaModValue::from_lua(return_value, state)?;
+                    let dm_return_value = DMValue::try_from(intermediary_value)
+                        .map_err(|e| specific_external!(e.message))?;
+                    return_value_list.append(dm_return_value);
+                    Ok(())
+                })
+                .map(|_| return_value_list)
         }
-        values
-            .into_iter()
-            .try_for_each(|value| {
-                let converted_value = DMValue::try_from(LuaModValue::from_lua(value, state)?)
-                    .map_err(|e: Runtime| external!(e.message))?;
-                return_value_list.append(converted_value);
-                Ok(())
-            })
-            .map(|_| {
+    };
+
+    // Handle the result of parsing the task result
+    match parsed_result {
+        Err(e) => {
+            // If the status is not an error, this means a return value
+            // could not be converted to DM
+            if status != ThreadStatus::Error {
                 return_list
-                    .set(DMValue::from_string("param").unwrap(), return_value_list)
+                    .set(
+                        DMValue::from_string("status").unwrap(),
+                        DMValue::from_string("bad return").unwrap(),
+                    )
                     .unwrap();
-                DMValue::from(return_list)
-            })
-    })
-    .or_else(|e| {
-        if status_string != "errored" {
+            }
+
+            // Regardless, put the error into the param of the return list
             return_list
                 .set(
-                    DMValue::from_string("status").unwrap(),
-                    DMValue::from_string("bad return").unwrap(),
+                    DMValue::from_string("param").unwrap(),
+                    DMValue::from_string(format!("{e}")).unwrap(),
                 )
                 .unwrap();
         }
-        return_list
-            .set(
-                DMValue::from_string("param").unwrap(),
-                DMValue::from_string(format!("{}", e)).unwrap(),
-            )
-            .unwrap();
-        Ok(DMValue::from(return_list))
-    })
+        Ok(result) => {
+            return_list
+                .set(DMValue::from_string("param").unwrap(), result)
+                .unwrap();
+        }
+    };
+    Ok(DMValue::from(return_list))
 }
 
+// Kills a task, removing it from the relavent data structures
 #[hook("/proc/__lua_kill_task")]
 fn kill_task(state: DMValue, task_info: DMValue) {
     let key = state
         .as_string()
         .map_err(|e| specific_runtime!(e.message))?;
     STATES.with(|states| {
-        if let Some(lua_state) = states.borrow().get(&key) {
-            let globals = lua_state.globals();
-            let global_task_info_table: Table = globals
-                .raw_get("__task_info")
-                .map_err(|e| specific_runtime!(e))?;
-            let task_info_list = task_info
-                .as_list()
-                .map_err(|e| specific_runtime!(e.message))?;
-            let task_info_value = lua::tablify_list(task_info_list)?
-                .to_lua(lua_state)
-                .map_err(|e| specific_runtime!(e))?;
-            let target_task_info_table =
-                Table::from_lua(task_info_value, lua_state).map_err(|e| specific_runtime!(e))?;
-            match global_task_info_table
-                .clone()
-                .pairs::<Thread, Table>()
-                .collect::<mlua::Result<Vec<(Thread, Table)>>>()
-                .map_err(|e: mlua::Error| specific_runtime!(e))?
-                .iter()
-                .find(|(_, info)| {
-                    for info_pair in info.clone().pairs::<MluaValue, MluaValue>().flatten() {
-                        let (key, value) = info_pair;
-                        if let Ok(info_value) = target_task_info_table.raw_get::<_, MluaValue>(key)
-                        {
-                            return info_value == value;
-                        }
+        let state_map = states.borrow();
+        let lua_state = state_map
+            .get(&key)
+            .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
+        // Get the task info table
+        let globals = lua_state.globals();
+        let task_info_table: Table = globals
+            .raw_get("__task_info")
+            .map_err(|e| specific_runtime!(e))?;
+
+        // Convert the info of the task to kill
+        // from a DM list to a lua table
+        let task_info_list = task_info
+            .as_list()
+            .map_err(|e| specific_runtime!(e.message))?;
+        let task_info_value = lua::tablify_list(task_info_list)?
+            .to_lua(lua_state)
+            .map_err(|e| specific_runtime!(e))?;
+        let target_task_info =
+            Table::from_lua(task_info_value, lua_state).map_err(|e| specific_runtime!(e))?;
+
+        // Search the task info table for the info
+        // corresponding to the task to kill
+        let found_info = task_info_table
+            .clone()
+            .pairs::<Thread, Table>()
+            .collect::<LuaResult<Vec<(Thread, Table)>>>()
+            .map_err(|e: mlua::Error| specific_runtime!(e))?
+            .into_iter()
+            .find(|(_, info)| {
+                for info_pair in info.clone().pairs::<MluaValue, MluaValue>().flatten() {
+                    let (key, value) = info_pair;
+                    if let Ok(info_value) = target_task_info.raw_get::<_, MluaValue>(key) {
+                        return info_value == value;
                     }
-                    false
-                }) {
-                Some((coroutine, info)) => {
-                    let index: i32 = info.raw_get("index").map_err(|e| specific_runtime!(e))?;
-                    match info
-                        .raw_get::<_, String>("status")
-                        .map_err(|e| specific_runtime!(e))?
-                        .as_str()
-                    {
-                        "sleep" => {
-                            let sleep_queue: Table = globals
-                                .raw_get("__sleep_queue")
-                                .map_err(|e| specific_runtime!(e))?;
-                            sleep_queue
-                                .raw_remove(index)
-                                .map_err(|e| specific_runtime!(e))?;
-                            Ok(())
-                        }
-                        "yield" => {
-                            let yield_table: Table = globals
-                                .raw_get("__yield_table")
-                                .map_err(|e| specific_runtime!(e))?;
-                            yield_table
-                                .raw_set(index, mlua::Nil)
-                                .map_err(|e| specific_runtime!(e))?;
-                            Ok(())
-                        }
-                        _ => Err(specific_runtime!("invalid task status")),
-                    }?;
-                    global_task_info_table
-                        .raw_remove(coroutine.clone())
-                        .map_err(|e| specific_runtime!(e))?;
-                    Ok(DMValue::null())
                 }
-                None => Ok(DMValue::null()),
+                false
+            });
+
+        match found_info {
+            // If we found nothing, just return
+            None => Ok(()),
+
+            // If we found a task...
+            Some((coroutine, info)) => {
+                // Get the index of the task in its relavent table
+                let index: i32 = info.raw_get("index").map_err(|e| specific_runtime!(e))?;
+
+                // Check to see if the task is sleeping or yielded
+                match info
+                    .raw_get::<_, String>("status")
+                    .map_err(|e| specific_runtime!(e))?
+                    .as_str()
+                {
+                    // Sleeping task
+                    "sleep" => {
+                        let sleep_queue: Table = globals
+                            .raw_get("__sleep_queue")
+                            .map_err(|e| specific_runtime!(e))?;
+                        sleep_queue.set_readonly(false);
+                        sleep_queue
+                            .raw_remove(index)
+                            .map_err(|e| specific_runtime!(e))?;
+                        sleep_queue.set_readonly(true);
+                        Ok(())
+                    }
+
+                    // Yielded task
+                    "yield" => {
+                        let yield_table: Table = globals
+                            .raw_get("__yield_table")
+                            .map_err(|e| specific_runtime!(e))?;
+                        yield_table.set_readonly(false);
+                        yield_table
+                            .raw_set(index, mlua::Nil)
+                            .map_err(|e| specific_runtime!(e))?;
+                        yield_table.set_readonly(true);
+                        Ok(())
+                    }
+                    _ => Err(specific_runtime!("invalid task status")),
+                }?;
+
+                // Now we can remove the thread itself from the task info table
+                task_info_table.set_readonly(false);
+                task_info_table
+                    .raw_remove(coroutine.clone())
+                    .map_err(|e| specific_runtime!(e))?;
+                task_info_table.set_readonly(true);
+                Ok(())
             }
-        } else {
-            Err(specific_runtime!("No lua state at {}", key))
-        }
+        }?;
+
+        // Returns null because we have no need for a return value
+        Ok(DMValue::null())
     })
 }
 

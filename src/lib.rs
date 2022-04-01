@@ -60,6 +60,17 @@ fn set_sleep_flag<'lua>(lua: &'lua Lua, enabled: MluaValue<'lua>) -> mlua::Resul
     Ok(())
 }
 
+/// Sets the lua variable `dm.usr` to a weak reference to the passed in DM value
+fn set_usr(lua: &Lua, usr: &DMValue) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let dm_table: Table = globals.raw_get("dm")?;
+    dm_table.set_readonly(false);
+    let wrapped_usr = LuaModValue::try_from(usr).map_err(|e| external!(e.message))?;
+    dm_table.raw_set("usr", wrapped_usr)?;
+    dm_table.set_readonly(true);
+    Ok(())
+}
+
 /// Applies auxlua-specific data structures to the lua state
 fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let globals = state.globals();
@@ -428,6 +439,9 @@ fn load(state: DMValue, script: DMValue, name: DMValue) {
             .create_thread(wrapped_function)
             .map_err(|e| specific_runtime!(e))?;
 
+        // Set `dm.usr` to whatever `usr` currently is in BYOND
+        err_as_string!(set_usr(lua_state, usr));
+
         // Run the thread
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Nil);
@@ -612,6 +626,9 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
         err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
 
+        // Set `dm.usr` to whatever `usr` currently is in BYOND
+        err_as_string!(set_usr(lua_state, usr));
+
         // Bind the function in a coroutine and run it
         let coroutine = err_as_string!(lua_state.create_thread(function));
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
@@ -682,6 +699,9 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
         err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
 
+        // Set `dm.usr` to whatever `usr` currently is in BYOND
+        err_as_string!(set_usr(lua_state, usr));
+
         // Run the task
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(resume_args));
@@ -733,6 +753,9 @@ fn awaken(state: DMValue) {
         let task_info_table: Table = err_as_string!(globals.raw_get("__task_info"));
         let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
         let function_name = err_as_string!(this_tasks_info.raw_get("name"));
+
+        // Set `dm.usr` to whatever `usr` currently is in BYOND
+        err_as_string!(set_usr(lua_state, usr));
 
         // Run the task
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());

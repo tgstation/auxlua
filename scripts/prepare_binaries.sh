@@ -9,8 +9,6 @@ rustup target add i686-unknown-linux-gnu
 env PKG_CONFIG_ALLOW_CROSS=1 \
 	cargo build --release --target i686-unknown-linux-gnu
 
-mv target/auxlua.dm target/auxlua.linux.dm
-
 echo '==== Windows build ====' # ----------------------------------------------
 cross build --release --target i686-pc-windows-gnu
 # https://github.com/rust-lang/rust/issues/12859#issuecomment-62255275

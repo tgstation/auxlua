@@ -11,5 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = {git = "https://github.com/willox/auxtools"}
-#mlua = {version = "0.8.0-beta.1", features = ["luau"]}
-mlua = {git = "https://github.com/Y0SH1M4S73R/mlua", branch = "luau_hooks", features = ["luau"]}
+mlua = {version = "0.8.0-beta.3", features = ["luau"]}

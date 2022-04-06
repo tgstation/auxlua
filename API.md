@@ -74,15 +74,15 @@ A weak reference to DM's `usr`.
 
 ## Task management
 
-When a main thread calls [`sleep()`], it is added to the end of the [`__sleep_queue`](#sleepqueue) table. Each call to `/proc/__lua_awaken` dequeues and runs the thread at the start of `__sleep_queue`. Under the hood, `sleep` performs the following:
+When a main thread calls `sleep()`, it is added to the end of the [`__sleep_queue`](#__sleep_queue) table. Each call to `/proc/__lua_awaken` dequeues and runs the thread at the start of `__sleep_queue`. Under the hood, `sleep` performs the following:
 
-- Sets the global flag [`__sleep_flag`](#sleepflag)
+- Sets the global flag [`__sleep_flag`](#__sleep_flag)
 - Calls `coroutine.yield()`
 - Upon being resumed:
   - Ignores the return values of `coroutine.yield()`
   - Clears `__sleep_flag`
 
-When a main thread calls `coroutine.yield()` outside of `sleep()`, it is added to the first free index of the [`__yield_table`](#yieldtable) table. Each call to `/proc/__lua_resume` removes the thread at the specified index of `__yield_table` and resumes it, passing the list `arguments` as the arguments which `coroutine.yield()` will return.
+When a main thread calls `coroutine.yield()` outside of `sleep()`, it is added to the first free index of the [`__yield_table`](#__yield_table) table. Each call to `/proc/__lua_resume` removes the thread at the specified index of `__yield_table` and resumes it, passing the list `arguments` as the arguments which `coroutine.yield()` will return.
 
 Users of auxlua should provide a system for task management that offers a consistent order of execution for all active tasks within the same state.
 

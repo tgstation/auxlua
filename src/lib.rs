@@ -307,9 +307,7 @@ where
     task_info_table.set_readonly(false);
     if coroutine.status() == ThreadStatus::Resumable {
         // Check the sleep flag
-        let sleep_flag: MluaValue = actual_globals
-            .raw_get("__sleep_flag")
-            .map_err(|e| specific_external!(e))?;
+        let sleep_flag: MluaValue = get_sleep_flag(lua).map_err(|e| specific_external!(e))?;
         if sleep_flag == mlua::Nil {
             // This is a yield -  get the yield table
             let yield_table: Table = actual_globals
@@ -764,16 +762,6 @@ fn coroutine_result(
         )
         .unwrap();
 
-    // Only yields have a non-zero yield index
-    if yield_index != 0 {
-        return_list
-            .set(
-                DMValue::from_string("yield_index").unwrap(),
-                yield_index as f32,
-            )
-            .unwrap()
-    }
-
     // Create a human-readable status string
     let status_string = match status {
         ThreadStatus::Resumable => "yielded",
@@ -788,6 +776,28 @@ fn coroutine_result(
             DMValue::from_string(status_string).unwrap(),
         )
         .unwrap();
+
+    // This block handles things that only happen during a yield or sleep
+    if status == ThreadStatus::Resumable {
+        // Only yields have a non-zero yield index
+        if yield_index != 0 {
+            return_list
+                .set(
+                    DMValue::from_string("yield_index").unwrap(),
+                    yield_index as f32,
+                )
+                .unwrap()
+        // If the index is zero, this is a sleep - mark it as such and return
+        } else {
+            return_list
+                .set(
+                    DMValue::from_string("status").unwrap(),
+                    DMValue::from_string("sleeping").unwrap(),
+                )
+                .unwrap();
+            return Ok(DMValue::from(return_list));
+        }
+    };
 
     // Parse the result of the task
     let parsed_result = match ret {

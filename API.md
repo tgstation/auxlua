@@ -74,16 +74,17 @@ A weak reference to DM's `usr`.
 
 ## Task management
 
-The Lua Scripting subsystem manages the execution of tasks for each lua state. A single fire of the subsystem behaves as follows:
+When a main thread calls [`sleep()`], it is added to the end of the [`__sleep_queue`](#sleepqueue) table. Each call to `/proc/__lua_awaken` dequeues and runs the thread at the start of `__sleep_queue`. Under the hood, `sleep` performs the following:
 
-- All tasks that slept since the last fire are resumed in the order they slept.
-- For each queued resume, the corresponding task is resumed.
+- Sets the global flag [`__sleep_flag`](#sleepflag)
+- Calls `coroutine.yield()`
+- Upon being resumed:
+  - Ignores the return values of `coroutine.yield()`
+  - Clears `__sleep_flag`
 
-### sleep()
+When a main thread calls `coroutine.yield()` outside of `sleep()`, it is added to the first free index of the [`__yield_table`](#yieldtable) table. Each call to `/proc/__lua_resume` removes the thread at the specified index of `__yield_table` and resumes it, passing the list `arguments` as the arguments which `coroutine.yield()` will return.
 
-Yields the current thread, scheduling it to be resumed during the next fire of SSlua. Use this function to prevent your lua code from exceeding its allowed execution duration.
-
-Under the hood, this function sets the internal global flag `__sleep_flag`, calls `coroutine.yield` with no arguments, ignores its return values, then clears `__sleep_flag`.
+Users of auxlua should provide a system for task management that offers a consistent order of execution for all active tasks within the same state.
 
 ---
 
@@ -95,13 +96,17 @@ Auxlua defines several globals for internal use. These are read-only.
 
 This flag is used to designate that a yielding task should be put in the sleep queue instead of the yield table.
 
+### \_\_set_sleep_flag(value)
+
+A function that sets `__sleep_flag` to `value`. Calling this directly is not recommended, as doing so muddies the distinction between sleeps and yields.
+
 ### \_\_sleep_queue
 
-A sequence of threads, each corresponding to a task that has slept. When calling `__lua_awaken` from DM, auxlua will dequeue the first thread from the sequence and resume it. Threads in this queue can be resumed from lua code, but doing so is heavily advised against.
+A sequence of threads, each corresponding to a task that has slept. When calling `/proc/__lua_awaken`, auxlua will dequeue the first thread from the sequence and resume it. Threads in this queue can be resumed from lua code, but doing so is heavily advised against.
 
 ### \_\_yield_table
 
-A table of threads, each corresponding to a coroutine that has yielded. When calling `__lua_resume` from DM, auxlua will look for a thread at the index specified in the `index` argument, and resume it with the arguments specified in the `arguments` argument. Threads in this table can be resumed from lua code, but doing so is heavily advised against.
+A table of threads, each corresponding to a coroutine that has yielded. When calling `/proc/__lua_resume`, auxlua will look for a thread at the index specified in the `index` argument, and resume it with the arguments specified in the `arguments` argument. Threads in this table can be resumed from lua code, but doing so is heavily advised against.
 
 ### \_\_task_info
 

@@ -62,11 +62,9 @@ Calls the global proc `/proc/[proc]` with `...` as its arguments.
 
 A reference to DM's `world`, in the form of datum userdata. This reference will never evaluate to `nil`, since `world` always exists.
 
-Due to limitations inherent in the wrapper functions used on tgstation, `world:set_var` and `world:call_proc` will raise an error.
-
 ### dm.global_vars
 
-A reference to DM's `global`, in the form of datum userdata. Subject to the same limitations as `dm.world`
+A reference to DM's `global`, in the form of datum userdata. This reference will never evaluate to `nil`, since `global` always exists.
 
 ### dm.usr
 

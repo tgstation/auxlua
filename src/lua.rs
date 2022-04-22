@@ -359,6 +359,9 @@ pub fn global_proc_call<'a>(lua: &'a mlua::Lua, args: MultiValue<'a>) -> mlua::R
         external!("attempted call with 0 arguments (expected proc name and 0+ proc arguments)")
     })?;
     let mut proc_name = String::from_lua(first_arg, lua)?;
+    if proc_name.starts_with("__lua") {
+        return Err(external!("attempted to call lua hook from within lua code"));
+    };
 
     // Convert the rest of the args into intermediary value structs
     let proc_args =

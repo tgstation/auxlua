@@ -193,7 +193,7 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
 }
 
 /// A CPU limiter for lua states.
-fn exhaustion_check(_: &Lua) -> LuaResult<VmState> {
+fn exhaustion_check() -> LuaResult<VmState> {
     LUA_THREAD_START.with(|start| {
         EXECUTION_LIMIT.with(|limit| {
             if start.borrow().elapsed().as_millis() > *limit.borrow() {

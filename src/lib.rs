@@ -920,6 +920,13 @@ fn kill_task(state: DMValue, task_info: DMValue) {
                             .raw_get("__sleep_queue")
                             .map_err(|e| specific_runtime!(e))?;
                         sleep_queue.set_readonly(false);
+                        // If we're killing the last sleeping task, there will be no awakening tasks to clear the sleep flag
+                        // This will cause any yielding tasks to be erroneously treated as sleeps
+                        // In this case, we clear the sleep flag
+                        if sleep_queue.raw_len() == 1 {
+                            set_sleep_flag(lua_state, mlua::Value::Nil)
+                                .map_err(|e| specific_runtime!(e))?;
+                        }
                         sleep_queue
                             .raw_remove(index)
                             .map_err(|e| specific_runtime!(e))?;

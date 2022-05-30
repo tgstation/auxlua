@@ -78,9 +78,8 @@ When a main thread calls `sleep()`, it is added to the end of the [`__sleep_queu
 
 - Sets the global flag [`__sleep_flag`](#__sleep_flag)
 - Calls `coroutine.yield()`
-- Upon being resumed:
-  - Ignores the return values of `coroutine.yield()`
-  - Clears `__sleep_flag`
+- Clears the sleep flag when determining whether the task slept or yielded
+- Ignores the return values of `coroutine.yield()` once resumed
 
 When a main thread calls `coroutine.yield()` outside of `sleep()`, it is added to the first free index of the [`__yield_table`](#__yield_table) table. Each call to `/proc/__lua_resume` removes the thread at the specified index of `__yield_table` and resumes it, passing the list `arguments` as the arguments which `coroutine.yield()` will return.
 
@@ -94,7 +93,7 @@ Auxlua defines several globals for internal use. These are read-only.
 
 ### \_\_sleep_flag
 
-This flag is used to designate that a yielding task should be put in the sleep queue instead of the yield table.
+This flag is used to designate that a yielding task should be put in the sleep queue instead of the yield table. Once auxlua determines that a task should sleep, `__sleep_flag` is cleared.
 
 ### \_\_set_sleep_flag(value)
 

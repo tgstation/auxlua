@@ -133,7 +133,6 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
             r#"function()
         __set_sleep_flag(true)
         coroutine.yield()
-        __set_sleep_flag(nil)
         return
     end"#,
         )
@@ -342,6 +341,9 @@ where
             yield_table.set_readonly(true);
             return Ok(first_border + 1);
         } else {
+            // Clear the sleep flag - We're past the only check for the sleep flag's value
+            set_sleep_flag(lua, mlua::Value::Nil)?;
+
             // This is a sleep - get the sleep queue
             let sleep_queue: Table = actual_globals
                 .raw_get("__sleep_queue")
@@ -594,10 +596,6 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         }
         let function = err_as_string!(Function::from_lua(might_be_table_or_func, lua_state));
 
-        // Store and nil the sleep flag in case the call yields without sleeping
-        let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
-        err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
-
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
@@ -613,12 +611,6 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
             coroutine,
             &function_name
         ));
-
-        // Restore the sleep flag if it is still nil
-        let current_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
-        if current_sleep_flag == mlua::Nil {
-            err_as_string!(set_sleep_flag(lua_state, old_sleep_flag))
-        }
 
         Ok(err_as_string!(coroutine_result(
             (status, ret, yield_index, function_name),
@@ -667,10 +659,6 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
         let function_name = err_as_string!(this_tasks_info.raw_get("name"));
 
-        // Store and nil the sleep flag in case the resume yields without sleeping
-        let old_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
-        err_as_string!(set_sleep_flag(lua_state, mlua::Nil));
-
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
@@ -685,12 +673,6 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
             coroutine,
             &function_name
         ));
-
-        // Restore the sleep flag if it is still nil
-        let current_sleep_flag = err_as_string!(get_sleep_flag(lua_state));
-        if current_sleep_flag == mlua::Nil {
-            err_as_string!(set_sleep_flag(lua_state, old_sleep_flag))
-        }
 
         Ok(err_as_string!(coroutine_result(
             (status, ret, yield_index, function_name),
@@ -920,13 +902,6 @@ fn kill_task(state: DMValue, task_info: DMValue) {
                             .raw_get("__sleep_queue")
                             .map_err(|e| specific_runtime!(e))?;
                         sleep_queue.set_readonly(false);
-                        // If we're killing the last sleeping task, there will be no awakening tasks to clear the sleep flag
-                        // This will cause any yielding tasks to be erroneously treated as sleeps
-                        // In this case, we clear the sleep flag
-                        if sleep_queue.raw_len() == 1 {
-                            set_sleep_flag(lua_state, mlua::Value::Nil)
-                                .map_err(|e| specific_runtime!(e))?;
-                        }
                         sleep_queue
                             .raw_remove(index)
                             .map_err(|e| specific_runtime!(e))?;

@@ -217,9 +217,9 @@ dependencies = [
 
 [[package]]
 name = "luau0-src"
-version = "0.3.0+luau526"
+version = "0.3.3+luau531"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6bed784925264166a503efffce372fd521bdbb325a0405c483a0bd3248ccce9"
+checksum = "a0c8678ba90c16ddb1cb4fcdf4ceba50672c53aa6288d2557c3fe9a5084cd148"
 dependencies = [
  "cc",
 ]
@@ -241,9 +241,9 @@ checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
 
 [[package]]
 name = "mlua"
-version = "0.8.0-beta.5"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb054c5769e1aeb137554b95941e997b62d17f5265bef213cb63179d75a6bf6"
+checksum = "d75eb178f8a9d6654ef31f094fb3da6d1e81e714f27007e92a3094ddd6587aa2"
 dependencies = [
  "bstr",
  "cc",

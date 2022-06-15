@@ -16,9 +16,9 @@ Equivalent to DM's `datum.var`
 
 Equivalent to DM's `datum.var = value`
 
-### datum:call_proc(proc, ...)
+### datum:call_proc(procName, ...)
 
-Equivalent to DM's `datum.proc(...)`
+Equivalent to DM's `datum.procName(...)`
 
 ---
 
@@ -39,6 +39,10 @@ Equivalent to DM's `list[index]`
 ### list:set(index, value)
 
 Equivalent to DM's `list[index] = value`
+
+### list:add(value)
+
+Equivalent to DM's `list.Add(value)`
 
 ### list:to_table()
 

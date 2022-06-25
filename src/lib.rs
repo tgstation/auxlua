@@ -7,6 +7,8 @@ use mlua::{FromLua, Function, Lua, MultiValue, Table, Thread, ThreadStatus, ToLu
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 pub mod lua;
@@ -263,12 +265,12 @@ fn set_execution_limit(limit: DMValue) {
 fn new_state() {
     let new_state = Lua::new_with(mlua::StdLib::ALL_SAFE, mlua::LuaOptions::default())
         .map_err(|e| specific_runtime!("{}", e))?;
-    let state_ref = &new_state;
-    let state_hash: String = format!("{state_ref:p}");
-    apply_state_vars(&new_state, state_hash.clone())?;
+    static NEXT_STATE_ID: AtomicU32 = AtomicU32::new(1);
+    let state_key: String = format!("{}", NEXT_STATE_ID.fetch_add(1, Relaxed));
+    apply_state_vars(&new_state, state_key.clone())?;
     STATES.with(|states| {
-        states.borrow_mut().insert(state_hash.clone(), new_state);
-        Ok(DMValue::from_string(state_hash).unwrap())
+        states.borrow_mut().insert(state_key.clone(), new_state);
+        Ok(DMValue::from_string(state_key).unwrap())
     })
 }
 

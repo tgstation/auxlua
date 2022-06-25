@@ -197,7 +197,7 @@ fn exhaustion_check() -> LuaResult<VmState> {
         EXECUTION_LIMIT.with(|limit| {
             if start.borrow().elapsed().as_millis() > *limit.borrow() {
                 Err(external!(
-                    "execution limit reached - call dm.sleep or coroutine.yield before this point"
+                    "execution limit reached - call sleep or coroutine.yield before this point"
                 ))
             } else {
                 Ok(VmState::Continue)

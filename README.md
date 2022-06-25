@@ -8,31 +8,31 @@ The [Rust] compiler:
 
 1. Install the Rust compiler's dependencies (primarily the system linker):
 
-   * Ubuntu: `sudo apt-get install gcc-multilib`
-   * Windows (MSVC): [Build Tools for Visual Studio 2017][msvc]
-   * Windows (GNU): No action required
+   - Ubuntu: `sudo apt-get install gcc-multilib`
+   - Windows (MSVC): [Build Tools for Visual Studio 2017][msvc]
+   - Windows (GNU): No action required
 
 1. Use [the Rust installer](https://rustup.rs/), or another Rust installation method,
    or run the following:
 
-    ```sh
-    curl https://sh.rustup.rs -sSfo rustup-init.sh
-    chmod +x rustup-init.sh
-    ./rustup-init.sh
-    ```
+   ```sh
+   curl https://sh.rustup.rs -sSfo rustup-init.sh
+   chmod +x rustup-init.sh
+   ./rustup-init.sh
+   ```
 
 1. Set the default compiler to **32-bit**:
 
-    ```sh
-    # Clone the `auxlua` repository to a directory of your choice
-    git clone https://github.com/Y0SH1M4S73R/auxlua.git
-    # in the `auxlua` directory...
-    cd auxlua
-    # Linux
-    rustup target add i686-unknown-linux-gnu
-    # Windows
-    rustup target add i686-pc-windows-msvc
-    ```
+   ```sh
+   # Clone the `auxlua` repository to a directory of your choice
+   git clone https://github.com/tgstation/auxlua.git
+   # in the `auxlua` directory...
+   cd auxlua
+   # Linux
+   rustup target add i686-unknown-linux-gnu
+   # Windows
+   rustup target add i686-pc-windows-msvc
+   ```
 
 ## Compiling
 
@@ -42,6 +42,7 @@ use with any BYOND project. To compile in release mode (recommended for
 speed):
 
 Linux:
+
 ```sh
 export PKG_CONFIG_ALLOW_CROSS=1
 cargo build --release --target i686-unknown-linux-gnu

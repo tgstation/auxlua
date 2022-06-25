@@ -411,11 +411,13 @@ fn load(state: DMValue, script: DMValue, name: DMValue) {
         let wrapped_function = err_as_string!(chunk.into_function());
         let coroutine = err_as_string!(lua_state.create_thread(wrapped_function));
 
+        // Start the execution timer
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
         // Run the thread
-        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Nil);
 
         // Handle the result
@@ -598,12 +600,14 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         }
         let function = err_as_string!(Function::from_lua(might_be_table_or_func, lua_state));
 
+        // Start the execution timer
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
         // Bind the function in a coroutine and run it
         let coroutine = err_as_string!(lua_state.create_thread(function));
-        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(func_args));
 
         // Handle the result
@@ -661,11 +665,13 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
         let function_name = err_as_string!(this_tasks_info.raw_get("name"));
 
+        // Start the execution timer
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
         // Run the task
-        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(resume_args));
 
         // Handle the task's result
@@ -710,11 +716,13 @@ fn awaken(state: DMValue) {
         let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
         let function_name = err_as_string!(this_tasks_info.raw_get("name"));
 
+        // Start the execution timer
+        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
+
         // Set `dm.usr` to whatever `usr` currently is in BYOND
         err_as_string!(set_usr(lua_state, usr));
 
         // Run the task
-        LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
         let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Value::Nil);
 
         // Handle the task's result

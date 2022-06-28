@@ -238,7 +238,7 @@ fn datum_set_var(datum: &DMValue, var: String, value: Value) -> DMResult<()> {
             // If there is a wrapper proc, call it
             Some(wrapper_name) => {
                 let wrapper_proc = Proc::find(wrapper_name)
-                .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
+                    .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
                 match wrapper_proc.call(&[datum, &var_string, value]) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(specific_runtime!(e.message)),

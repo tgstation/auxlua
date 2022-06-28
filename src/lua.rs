@@ -490,7 +490,24 @@ impl TryFrom<&DMValue> for Value {
             ValueTag::Null => Ok(Self::Null),
             ValueTag::Number => Ok(Self::Number(value.as_number()?)),
             ValueTag::String => Ok(Self::String(value.as_string()?)),
-            ValueTag::List => Ok(Self::ListRef(value.clone())),
+            ValueTag::List
+            | ValueTag::MobVars
+            | ValueTag::ObjVars
+            | ValueTag::TurfVars
+            | ValueTag::AreaVars
+            | ValueTag::ClientVars
+            | ValueTag::Vars
+            | ValueTag::MobOverlays
+            | ValueTag::MobUnderlays
+            | ValueTag::ObjOverlays
+            | ValueTag::ObjUnderlays
+            | ValueTag::TurfOverlays
+            | ValueTag::TurfUnderlays
+            | ValueTag::AreaOverlays
+            | ValueTag::AreaUnderlays
+            | ValueTag::ImageVars
+            | ValueTag::WorldVars
+            | ValueTag::GlobalVars => Ok(Self::ListRef(value.clone())),
             ValueTag::Datum
             | ValueTag::Area
             | ValueTag::Turf
@@ -565,11 +582,8 @@ impl<'lua> ToLua<'lua> for Value {
 
 impl<'lua> FromLua<'lua> for Value {
     fn from_lua(value: MluaValue, lua: &mlua::Lua) -> mlua::Result<Self> {
-        let unsupported_value: mlua::Error = mlua::Error::ToLuaConversionError {
-            from: value.type_name(),
-            to: "BYOND value",
-            message: Some(String::from("unsupported value type")),
-        };
+        let typename = value.type_name();
+        let pointer = value.to_pointer();
         match value {
             MluaValue::Nil => Ok(Self::Null),
             MluaValue::Boolean(b) => Ok(Self::Number(if b { 1.0 } else { 0.0 })),
@@ -594,10 +608,10 @@ impl<'lua> FromLua<'lua> for Value {
                 } else if let Ok(generic) = ud.borrow::<GenericWrapper>() {
                     Ok(Self::Other(generic.value.clone()))
                 } else {
-                    Err(unsupported_value)
+                    Ok(Self::String(format!("{typename}: {pointer:p}")))
                 }
             }
-            _ => Err(unsupported_value),
+            _ => Ok(Self::String(format!("{typename}: {pointer:p}"))),
         }
     }
 }

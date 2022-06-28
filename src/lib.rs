@@ -454,7 +454,7 @@ fn get_globals(state: DMValue) {
                 Err(_) => {
                     // Cannot directly convert - represent as type name and pointer
                     let typename = table_key.type_name();
-                    let key_ref = &table_key;
+                    let key_ref = table_key.to_pointer();
                     DMValue::from_string(format!("{typename}: {key_ref:p}")).unwrap()
                 }
             };
@@ -466,7 +466,7 @@ fn get_globals(state: DMValue) {
             } else {
                 // Cannot directly convert - represent as type name and pointer
                 let typename = value.type_name();
-                let value_ref = &value;
+                let value_ref = value.to_pointer();
                 let value_string =
                     DMValue::from_string(format!("{typename}: {value_ref:p}")).unwrap();
                 ret.set(key_value, value_string)?;

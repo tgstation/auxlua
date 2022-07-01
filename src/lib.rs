@@ -11,7 +11,9 @@ use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
-pub mod lua;
+mod lua;
+
+auxtools::pin_dll!(false);
 
 type LuaModValue = lua::Value;
 type LuaResult<T> = mlua::Result<T>;

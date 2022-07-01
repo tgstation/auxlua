@@ -10,7 +10,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-auxtools = {git = "https://github.com/Y0SH1M4S73R/auxtools", branch = "full_shutdown", features = ["unpinned-dll"]}
+auxtools = {git = "https://github.com/Y0SH1M4S73R/auxtools", branch = "full_shutdown"}
 mlua = {version = "0.8.0", features = ["luau"]}
 
 [target.'cfg(windows)'.dependencies]

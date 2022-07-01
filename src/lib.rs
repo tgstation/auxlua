@@ -1,4 +1,4 @@
-use auxtools::{full_shutdown, hook, runtime, shutdown, DMResult, List, Runtime};
+use auxtools::{hook, runtime, shutdown, DMResult, List, Runtime};
 use lua::{
     AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
     GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, SET_VAR_WRAPPER,
@@ -954,28 +954,4 @@ fn kill_task(state: DMValue, task_info: DMValue) {
 #[shutdown]
 fn shutdown() {
     STATES.with(|states| states.borrow_mut().clear())
-}
-
-#[full_shutdown]
-fn full_shutdown() {
-    #[cfg(windows)]
-    unsafe {
-        use winapi::um::libloaderapi::{
-            FreeLibrary, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        };
-        let mut module = std::ptr::null_mut();
-
-        let get_handle_res = GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            full_shutdown as *const _,
-            &mut module,
-        );
-
-        if get_handle_res == 0 {
-            return;
-        }
-
-        FreeLibrary(module);
-    }
 }

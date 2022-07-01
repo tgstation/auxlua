@@ -29,7 +29,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#c606c2a7b3d9816e012da859a50b298799699887"
+source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#a11de93eeb25df5ba235b1465723864ae1285d78"
 dependencies = [
  "auxtools-impl",
  "cc",
@@ -46,7 +46,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#c606c2a7b3d9816e012da859a50b298799699887"
+source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#a11de93eeb25df5ba235b1465723864ae1285d78"
 dependencies = [
  "hex",
  "proc-macro2",

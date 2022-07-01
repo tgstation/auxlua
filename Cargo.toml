@@ -10,5 +10,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-auxtools = {git = "https://github.com/willox/auxtools"}
+auxtools = {git = "https://github.com/Y0SH1M4S73R/auxtools", branch = "full_shutdown", features = ["unpinned-dll"]}
 mlua = {version = "0.8.0", features = ["luau"]}
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["winuser", "libloaderapi", "psapi", "processthreadsapi"] }

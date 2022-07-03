@@ -1,7 +1,7 @@
-use auxtools::{hook, runtime, shutdown, DMResult, List, Runtime};
+use auxtools::{hook, runtime, shutdown, DMResult, List, Proc, Runtime};
 use lua::{
     AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
-    GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, SET_VAR_WRAPPER,
+    GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, PRINT_WRAPPER, SET_VAR_WRAPPER,
 };
 use mlua::{FromLua, Function, Lua, MultiValue, Table, Thread, ThreadStatus, ToLua, VmState};
 use std::cell::RefCell;
@@ -72,6 +72,61 @@ fn set_usr(lua: &Lua, usr: &DMValue) -> mlua::Result<()> {
     dm_table.raw_set("usr", wrapped_usr)?;
     dm_table.set_readonly(true);
     Ok(())
+}
+
+fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
+    PRINT_WRAPPER.with(|wrapper_cell| match &*wrapper_cell.borrow() {
+        Some(wrapper_name) => {
+            let wrapper_proc = Proc::find(wrapper_name)
+                .ok_or_else(|| specific_external!("{} not found", wrapper_name))?;
+
+            let state_key = STATES
+                .with(|state_map| {
+                    state_map.borrow().iter().find_map(|(key, val)| {
+                        // mlua::Lua doesn't implement PartialEq...
+                        // I guess two lua states are the same if they have the same global table
+                        if lua.globals() == val.globals() {
+                            Some(key.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .ok_or_else(|| {
+                    specific_external!(
+                        "Somehow, the current state could not be found in auxlua's state map."
+                    )
+                })?;
+
+            let state_id =
+                DMValue::from_string(state_key).map_err(|e| external!("{}", e.message))?;
+
+            // Try to convert the args into intermediary value structs
+            let proc_args = args.into_iter().try_fold::<_, _, LuaResult<_>>(
+                Vec::<LuaModValue>::new(),
+                |mut acc, val| {
+                    let arg = LuaModValue::from_lua(val, lua)?;
+                    acc.push(arg);
+                    Ok(acc)
+                },
+            )?;
+
+            // Try to convert the intermediary values into DM values
+            let converted: Vec<DMValue> = proc_args
+                .into_iter()
+                .map(DMValue::try_from)
+                .collect::<Result<Vec<DMValue>, Runtime>>()
+                .map_err(|e| external!(e.message))?;
+
+            let print_args = &DMValue::from(List::from_iter(converted));
+
+            wrapper_proc
+                .call(&[&state_id, print_args])
+                .map_err(|e| specific_external!("{}", e.message))?;
+            Ok(())
+        }
+        None => Err(external!("A wrapper for print has not been set.")),
+    })
 }
 
 /// Applies auxlua-specific data structures to the lua state
@@ -183,6 +238,14 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     globals
         .raw_set("__yield_table", yield_table)
         .map_err(|e| specific_runtime!("{}", e))?;
+    // Set print to the function that calls the DM-implemented
+    // wrapper function (if it exists)
+    let print = state
+        .create_function(print)
+        .map_err(|e| specific_runtime!("{}", e))?;
+    globals
+        .raw_set("print", print)
+        .map_err(|e| specific_runtime!("{}", e))?;
 
     // Set the exhaustion check as the interrupt handler
     state.set_interrupt(exhaustion_check);
@@ -254,6 +317,18 @@ fn set_execution_limit(limit: DMValue) {
     limit.as_number().and_then(|limit_num| {
         EXECUTION_LIMIT.with(|execution_limit| {
             *execution_limit.borrow_mut() = (limit_num as u128).to_owned();
+            Ok(DMValue::null())
+        })
+    })
+}
+
+/// Sets the proc path to call when calling
+/// `print`
+#[hook("/proc/__lua_set_print_wrapper")]
+fn set_print_wrapper(wrapper: DMValue) {
+    wrapper.as_string().and_then(|wrapper_string| {
+        PRINT_WRAPPER.with(|wrapper| {
+            *wrapper.borrow_mut() = Some(wrapper_string);
             Ok(DMValue::null())
         })
     })

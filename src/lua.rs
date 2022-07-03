@@ -51,6 +51,7 @@ thread_local! {
     pub static SET_VAR_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
     pub static DATUM_CALL_PROC_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
     pub static GLOBAL_CALL_PROC_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
+    pub static PRINT_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
 }
 
 #[derive(Debug)]

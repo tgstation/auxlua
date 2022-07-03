@@ -32,6 +32,16 @@
 	CRASH("auxlua not loaded")
 
 /**
+ * Sets a global proc as a wrapper for lua's print function
+ * 
+ * The proc will be called with the arguments (state_id, list/arguments)
+ * 
+ * required wrapper text the name of the proc to use as the wrapper
+ */
+/proc/__lua_set_print_wrapper(wrapper)
+	CRASH("auxlua not loaded")
+
+/**
  * Sets the maximum amount of time a lua chunk or function can execute without sleeping or yielding.
  * Chunks/functions that exceed this duration will produce an error.
  * 

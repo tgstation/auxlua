@@ -250,9 +250,16 @@ fn datum_set_var(datum: &DMValue, var: String, value: Value) -> DMResult<()> {
     })
 }
 
+fn datum_to_string(_: &Lua, arg: Value) -> mlua::Result<String> {
+    DMValue::try_from(arg)
+        .and_then(|value| value.to_string())
+        .map_err(|e| external!(e.message))
+}
+
 impl UserData for DatumWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
 
         methods.add_method("get_var", |_, this, var: String| {
             this.value
@@ -325,6 +332,7 @@ fn datum_equality(_: &Lua, args: (Value, Value)) -> mlua::Result<bool> {
 impl UserData for GlobalWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
 
         methods.add_method("get_var", |_, this, var: String| {
             StringRef::from_raw(var.as_bytes())
@@ -428,6 +436,7 @@ where
 impl UserData for GenericWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
     }
 }
 

@@ -100,8 +100,8 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
       - name: Get changelog
         run: |
-          CHANGELOG_ENTRY=`grep --color=never -m 1 -Po '## \K(\[[0-9\.]+\].+)' CHANGELOG.md`
-          DESCRIPTION=`bash ./scripts/extract-changelog.sh $CHANGELOG_ENTRY`
+          CHANGELOG_ENTRY=`grep --color=never -m 1 -Po '## \K(\[[0-9\.]+\].*)' CHANGELOG.md`
+          DESCRIPTION=`bash ./scripts/extract_changelog.sh $CHANGELOG_ENTRY`
           echo "CHANGELOG_ENTRY=$CHANGELOG_ENTRY" >> $GITHUB_ENV
           echo "CHANGELOG_DESCRIPTION<<EOF" >> $GITHUB_ENV
           echo "$DESCRIPTION" >> $GITHUB_ENV

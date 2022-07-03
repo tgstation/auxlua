@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3]
+
+### Added
+
+- Implements the `__tostring` metamethod for DM types.
+- Adds the hook `__lua_set_print_wrapper`, allowing you to set a DM proc as a wrapper for the `print` function.
+
 ## [0.1.2]
 
 ### Changed

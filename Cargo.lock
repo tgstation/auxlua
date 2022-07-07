@@ -40,7 +40,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#7f065deb74cab5a8218d5a87f778d7f3d0bea6f1"
+source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#95dad6a63abfbcccd290d061ed67e889e83cb273"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#7f065deb74cab5a8218d5a87f778d7f3d0bea6f1"
+source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#95dad6a63abfbcccd290d061ed67e889e83cb273"
 dependencies = [
  "hex",
  "proc-macro2",

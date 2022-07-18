@@ -117,6 +117,24 @@ impl UserData for ListWrapper {
         });
 
         methods.add_method("set", |_, this, (key, value): (Value, Value)| {
+            match this.value.raw.tag {
+                ValueTag::MobVars
+                | ValueTag::ObjVars
+                | ValueTag::TurfVars
+                | ValueTag::AreaVars
+                | ValueTag::ClientVars
+                | ValueTag::Vars
+                | ValueTag::ImageVars
+                | ValueTag::WorldVars
+                | ValueTag::GlobalVars => {
+                    if SET_VAR_WRAPPER.with(|wrapper| wrapper.borrow().is_some()) {
+                        return Err(external!(
+                            "Cannot edit vars-type lists when a var-setting wrapper proc is set."
+                        ));
+                    }
+                }
+                _ => (),
+            };
             this.value
                 .as_list()
                 .map_err(|_| runtime!("not a list"))

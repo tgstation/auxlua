@@ -146,6 +146,18 @@ impl UserData for ListWrapper {
         });
 
         methods.add_method("add", |_, this, elem: Value| {
+            match this.value.raw.tag {
+                ValueTag::MobVars
+                | ValueTag::ObjVars
+                | ValueTag::TurfVars
+                | ValueTag::AreaVars
+                | ValueTag::ClientVars
+                | ValueTag::Vars
+                | ValueTag::ImageVars
+                | ValueTag::WorldVars
+                | ValueTag::GlobalVars => return Err(external!("Cannot add to vars-type lists")),
+                _ => (),
+            };
             this.value
                 .as_list()
                 .map_err(|_| runtime!("not a list"))

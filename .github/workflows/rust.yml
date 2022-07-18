@@ -96,6 +96,8 @@ jobs:
           path: artifacts
       - name: Get changelog
         run: |
+          VERSION=`grep -Po '(?<=^version = ")([^"]+)' ./Cargo.toml`
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           CHANGELOG_ENTRY=`grep --color=never -m 1 -Po '## \K(\[[0-9\.]+\].*)' CHANGELOG.md`
           DESCRIPTION=`bash ./scripts/extract_changelog.sh $CHANGELOG_ENTRY`
           echo "CHANGELOG_ENTRY=$CHANGELOG_ENTRY" >> $GITHUB_ENV

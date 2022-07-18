@@ -351,6 +351,9 @@ impl UserData for GlobalWrapper {
         });
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
+            if this.value == DMValue::globals() {
+                return Err(external!("Cannot call a proc on the global object"));
+            }
             datum_call_proc(lua, &this.value, args)
         });
     }

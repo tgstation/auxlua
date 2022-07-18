@@ -117,6 +117,24 @@ impl UserData for ListWrapper {
         });
 
         methods.add_method("set", |_, this, (key, value): (Value, Value)| {
+            match this.value.raw.tag {
+                ValueTag::MobVars
+                | ValueTag::ObjVars
+                | ValueTag::TurfVars
+                | ValueTag::AreaVars
+                | ValueTag::ClientVars
+                | ValueTag::Vars
+                | ValueTag::ImageVars
+                | ValueTag::WorldVars
+                | ValueTag::GlobalVars => {
+                    if SET_VAR_WRAPPER.with(|wrapper| wrapper.borrow().is_some()) {
+                        return Err(external!(
+                            "Cannot edit vars-type lists when a var-setting wrapper proc is set."
+                        ));
+                    }
+                }
+                _ => (),
+            };
             this.value
                 .as_list()
                 .map_err(|_| runtime!("not a list"))
@@ -128,6 +146,18 @@ impl UserData for ListWrapper {
         });
 
         methods.add_method("add", |_, this, elem: Value| {
+            match this.value.raw.tag {
+                ValueTag::MobVars
+                | ValueTag::ObjVars
+                | ValueTag::TurfVars
+                | ValueTag::AreaVars
+                | ValueTag::ClientVars
+                | ValueTag::Vars
+                | ValueTag::ImageVars
+                | ValueTag::WorldVars
+                | ValueTag::GlobalVars => return Err(external!("Cannot add to vars-type lists")),
+                _ => (),
+            };
             this.value
                 .as_list()
                 .map_err(|_| runtime!("not a list"))
@@ -351,6 +381,9 @@ impl UserData for GlobalWrapper {
         });
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
+            if this.value == DMValue::globals() {
+                return Err(external!("Cannot call a proc on the global object"));
+            }
             datum_call_proc(lua, &this.value, args)
         });
     }

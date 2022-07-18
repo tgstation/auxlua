@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4]
+
+### Fixed
+
+- Fixed a crash when trying to call a proc on `dm.global_vars`.
+- Fixed a crash when trying to add a var to a `vars`-type list.
+- Fixed directly setting a value in a `vars`-type list being usable to bypass the set-var wrapper.
+
 ## [0.1.3]
 
 ### Added

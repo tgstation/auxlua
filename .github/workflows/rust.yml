@@ -7,8 +7,27 @@ on:
     branches:
       - master
 jobs:
+  check-needs-rebuild:
+    outputs:
+      needs-rebuild: $ {{ jobs.check-needs-rebuild.outputs.needs-rebuild }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      run: |
+        echo "::set-output name=needs-rebuild::false"
+        git diff --name-only HEAD^ HEAD > files.txt
+        while IFS= read -r file
+          do
+            echo $file
+            if [[ $file == **.rs ]]; then
+              echo "::set-output name=needs-rebuild::true"
+              break
+            fi
+          done < files.txt
   build-windows:
     runs-on: windows-latest
+    needs: check-needs-rebuild
+    if: needs.check-needs-rebuild.outputs.needs-rebuild
     steps:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
@@ -40,6 +59,8 @@ jobs:
           path: target/i686-pc-windows-msvc/release/auxlua.dll
   build-linux:
     runs-on: ubuntu-latest
+    needs: check-needs-rebuild
+    if: needs.check-needs-rebuild.outputs.needs-rebuild
     env:
       BYOND_MAJOR: 514
       BYOND_MINOR: 1583
@@ -91,7 +112,9 @@ jobs:
     if: contains(github.event.head_commit.message, '[release]')
     steps:
       - uses: actions/checkout@v1
-      - uses: actions/download-artifact@v2
+      - name: Download Artifacts
+        id: download_artifacts
+        uses: actions/download-artifact@v2
         with:
           path: artifacts
       - name: Get changelog
@@ -111,7 +134,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ env.VERSION }}
-          release_name: ${{ env.CHANGELOG_ENTRY }}
+          release_name: ${{ env.VERSION }}
           body: ${{ env.CHANGELOG_DESCRIPTION }}
       - name: Upload Linux build
         uses: actions/upload-release-asset@v1
@@ -119,7 +142,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/libauxlua.so
+          asset_path: ${{ steps.create_release.download_artifacts.download-path }}/libauxlua.so
           asset_name: libauxlua.so
           asset_content_type: application/octet-stream
       - name: Upload Windows build
@@ -128,6 +151,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/auxlua.dll
+          asset_path: ${{ steps.create_release.download_artifacts.download-path }}/auxlua.dll
           asset_name: auxlua.dll
           asset_content_type: application/octet-stream

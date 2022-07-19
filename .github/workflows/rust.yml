@@ -9,13 +9,13 @@ on:
 jobs:
   check-needs-rebuild:
     outputs:
-      needs-rebuild: $ {{ steps.verify-changed-files.outputs.files_changed || contains(github.event.head_commit.message, '[release]') }}
+      needs-rebuild: ${{ steps.verify-changed-files.outputs.files_changed || contains(github.event.head_commit.message, '[release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
       - name: Check Modified Files
         uses: tj-actions/verify-changed-files@v10
-        if: $ {{ !contains(github.event.head_commit.message, '[release]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[release]') }}
         id: verify-changed-files
         with:
           files: |

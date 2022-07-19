@@ -32,7 +32,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     needs: check-needs-rebuild
-    if: needs.check-needs-rebuild.outputs.needs-rebuild == 'true'
+    if: jobs.check-needs-rebuild.outputs.needs-rebuild == 'true'
     steps:
       - uses: actions/checkout@v1
       - uses: actions-rs/toolchain@v1
@@ -65,7 +65,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     needs: check-needs-rebuild
-    if: needs.check-needs-rebuild.outputs.needs-rebuild == 'true'
+    if: jobs.check-needs-rebuild.outputs.needs-rebuild == 'true'
     env:
       BYOND_MAJOR: 514
       BYOND_MINOR: 1583

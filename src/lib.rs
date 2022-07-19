@@ -1,4 +1,4 @@
-use auxtools::{hook, runtime, shutdown, DMResult, List, Proc, Runtime};
+use auxtools::{hook, init, runtime, shutdown, DMResult, List, Proc, Runtime};
 use lua::{
     AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
     GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, PRINT_WRAPPER, SET_VAR_WRAPPER,
@@ -7,11 +7,15 @@ use mlua::{FromLua, Function, Lua, MultiValue, Table, Thread, ThreadStatus, ToLu
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fs::File;
+use std::io::prelude::*;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-pub mod lua;
+mod lua;
+
+auxtools::pin_dll!(false);
 
 type LuaModValue = lua::Value;
 type LuaResult<T> = mlua::Result<T>;
@@ -34,6 +38,31 @@ thread_local! {
 
     /// A CPU usage limit in milliseconds for each run of lua code
     pub static EXECUTION_LIMIT: RefCell<u128> = RefCell::new(100);
+}
+
+#[init(full)]
+fn on_init() -> Result<(), String> {
+    let path = match DMValue::globals()
+        .get(auxtools::StringRef::new("log_directory").unwrap())
+        .and_then(|value| value.as_string())
+    {
+        Ok(directory) => format!("{directory}/auxtools_panic.log"),
+        Err(_) => {
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or_else(
+                |_| String::from("unknown"),
+                |duration| duration.as_secs().to_string(),
+            );
+            format!("auxtools_panic_{timestamp}.log")
+        }
+    };
+    std::panic::set_hook(Box::new(move |panic| {
+        if let Ok(mut panic_file) = File::create(path.clone()) {
+            if write!(panic_file, "{}", panic).is_err() {
+                eprintln!("Failed to print following panic to file: {}", panic)
+            }
+        }
+    }));
+    Ok(())
 }
 
 /// This function is guaranteed to return the first border of a table, unlike the default
@@ -1026,5 +1055,5 @@ fn kill_task(state: DMValue, task_info: DMValue) {
 
 #[shutdown]
 fn shutdown() {
-    STATES.with(|states| states.borrow_mut().clear())
+    STATES.with(|states| states.borrow_mut().clear());
 }

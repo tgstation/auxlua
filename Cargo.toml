@@ -1,6 +1,6 @@
 [package]
 name = "auxlua"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Y0SH1M4S73R <legoboyo@earthlink.net>"]
 edition = "2021"
 
@@ -10,8 +10,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-auxtools = {git = "https://github.com/Y0SH1M4S73R/auxtools", branch = "full_shutdown"}
+auxtools = {git = "https://github.com/willox/auxtools"}
 mlua = {version = "0.8.0", features = ["luau"]}
-
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["winuser", "libloaderapi", "psapi", "processthreadsapi"] }

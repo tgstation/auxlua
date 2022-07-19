@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.5]
+
+### Changed
+
+- On Windows, the dll file is no longer pinned to the process that loads it - it will be unloaded upon calling `auxtools_full_shutdown` and subsequently closing the world that initialized it.
+
+### Added
+
+- In the event of a panic, said panic will be output to a log file. If a DM global var of the name `log_directory` is specified at init-time, the panic log will be located at `[log_directory]/auxtools_panic.log`. Otherwise, it will be located at `auxtools_panic_[UNIX_TIMESTAMP].log`.
+
 ## [0.1.4]
 
 ### Fixed

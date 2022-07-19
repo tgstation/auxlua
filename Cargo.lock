@@ -30,17 +30,16 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "auxlua"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "auxtools",
  "mlua",
- "winapi 0.3.9",
 ]
 
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#95dad6a63abfbcccd290d061ed67e889e83cb273"
+source = "git+https://github.com/willox/auxtools#cd481e4aefad069d36ba28f9e17912ea0ecaa603"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -59,7 +58,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/Y0SH1M4S73R/auxtools?branch=full_shutdown#95dad6a63abfbcccd290d061ed67e889e83cb273"
+source = "git+https://github.com/willox/auxtools#cd481e4aefad069d36ba28f9e17912ea0ecaa603"
 dependencies = [
  "hex",
  "proc-macro2",

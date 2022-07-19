@@ -12,8 +12,8 @@ jobs:
       needs-rebuild: $ {{ jobs.check-needs-rebuild.outputs.needs-rebuild }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v1
       - name: Check Modified Files
-        uses: actions/checkout@v1
         run: |
           echo "::set-output name=needs-rebuild::false"
           git diff --name-only HEAD^ HEAD > files.txt

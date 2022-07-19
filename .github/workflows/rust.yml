@@ -12,18 +12,19 @@ jobs:
       needs-rebuild: $ {{ jobs.check-needs-rebuild.outputs.needs-rebuild }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      run: |
-        echo "::set-output name=needs-rebuild::false"
-        git diff --name-only HEAD^ HEAD > files.txt
-        while IFS= read -r file
-          do
-            echo $file
-            if [[ $file == **.rs ]]; then
-              echo "::set-output name=needs-rebuild::true"
-              break
-            fi
-          done < files.txt
+      - name: Check Modified Files
+        uses: actions/checkout@v1
+        run: |
+          echo "::set-output name=needs-rebuild::false"
+          git diff --name-only HEAD^ HEAD > files.txt
+          while IFS= read -r file
+            do
+              echo $file
+              if [[ $file == **.rs ]]; then
+                echo "::set-output name=needs-rebuild::true"
+                break
+              fi
+            done < files.txt
   build-windows:
     runs-on: windows-latest
     needs: check-needs-rebuild

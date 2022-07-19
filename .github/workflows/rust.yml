@@ -9,27 +9,17 @@ on:
 jobs:
   check-needs-rebuild:
     outputs:
-      needs-rebuild: $ {{ steps.check-modified.outputs.needs-rebuild }}
+      needs-rebuild: $ {{ steps.verify-changed-files.outputs.files_changed || contains(github.event.head_commit.message, '[release]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
       - name: Check Modified Files
-        id: check-modified
-        run: |
-          if '${{ contains(github.event.head_commit.message, '[release]') }}'; then
-            echo "::set-output name=needs-rebuild::true"
-          else
-            echo "::set-output name=needs-rebuild::false"
-            git diff --name-only HEAD^ HEAD > files.txt
-            while IFS= read -r file
-              do
-                echo $file
-                if [[ $file == **.rs ]]; then
-                  echo "::set-output name=needs-rebuild::true"
-                  break
-                fi
-              done < files.txt
-          fi
+        uses: tj-actions/verify-changed-files@v10
+        if: $ {{ !contains(github.event.head_commit.message, '[release]') }}
+        id: verify-changed-files
+        with:
+          files: |
+            **.rs
   build-windows:
     runs-on: windows-latest
     needs: check-needs-rebuild

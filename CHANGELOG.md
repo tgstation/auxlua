@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0]
+
+### Fixed
+
+- Fixes a crash that occured when calling `print` when there is more than 1 lua state.
+
 ## [0.1.5]
 
 ### Changed

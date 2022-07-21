@@ -108,13 +108,13 @@ fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
         Some(wrapper_name) => {
             let wrapper_proc = Proc::find(wrapper_name)
                 .ok_or_else(|| specific_external!("{} not found", wrapper_name))?;
+            let dm_table: Table = lua.globals().get("dm")?;
+            let own_state_id: String = dm_table.get("state_id")?;
 
             let state_key = STATES
                 .with(|state_map| {
-                    state_map.borrow().iter().find_map(|(key, val)| {
-                        // mlua::Lua doesn't implement PartialEq...
-                        // I guess two lua states are the same if they have the same global table
-                        if lua.globals() == val.globals() {
+                    state_map.borrow().iter().find_map(|(key, _)| {
+                        if own_state_id == key.clone() {
                             Some(key.clone())
                         } else {
                             None

@@ -113,7 +113,7 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           path: artifacts
-        run: |
+      - run: |
           cd ./artifacts
           unzip auxlua.zip
           unzip auxlua.dll.zip

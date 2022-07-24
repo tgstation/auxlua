@@ -113,8 +113,9 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           path: artifacts
-      - run: |
-          cd ./artifacts
+      - name: Unzip Artifacts
+        run: |
+          cd ${{ steps.download_artifacts.outputs.download-path }}
           unzip auxlua.zip
           unzip auxlua.dll.zip
       - name: Get changelog

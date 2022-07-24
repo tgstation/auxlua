@@ -116,8 +116,8 @@ jobs:
       - name: Unzip Artifacts
         run: |
           cd ${{ steps.download_artifacts.outputs.download-path }}
-          unzip auxlua.zip
-          unzip auxlua.dll.zip
+          unzip auxlua/auxlua.zip
+          unzip auxlua.dll/auxlua.dll.zip
       - name: Get changelog
         run: |
           VERSION=`grep -Po '(?<=^version = ")([^"]+)' ./Cargo.toml`

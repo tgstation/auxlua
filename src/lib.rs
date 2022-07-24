@@ -548,17 +548,29 @@ fn load(state: DMValue, script: DMValue, name: DMValue) {
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
 
         // Set `dm.usr` to whatever `usr` currently is in BYOND
-        err_as_string!(set_usr(lua_state, usr));
+        #[allow(unused_must_use)]
+        if let Err(e) = set_usr(lua_state, usr) {
+            if print(lua_state, MultiValue::from_vec(vec![MluaValue::Error(e.clone())])).is_err() {
+                DMValue::world().call(
+                    "Error",
+                    &[&DMValue::from_string(format!(
+                        "Auxlua failed to print the following error when attempting to set dm.usr: {e}"
+                    ))
+                    .unwrap()],
+                );
+            }
+        };
 
         // Run the thread
         let ret: LuaResult<MultiValue> = coroutine.resume(mlua::Nil);
 
         // Handle the result
         let status = coroutine.status();
-        let yield_index = handle_coroutine_return(lua_state, coroutine, &name)
-            .map_err(|e| specific_runtime!(e))?;
-        coroutine_result((status, ret, yield_index, name), lua_state)
-            .map_err(|e| specific_runtime!(e))
+        let yield_index = err_as_string!(handle_coroutine_return(lua_state, coroutine, &name));
+        Ok(err_as_string!(coroutine_result(
+            (status, ret, yield_index, name),
+            lua_state
+        )))
     })
 }
 
@@ -764,7 +776,18 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
 
         // Set `dm.usr` to whatever `usr` currently is in BYOND
-        err_as_string!(set_usr(lua_state, usr));
+        #[allow(unused_must_use)]
+        if let Err(e) = set_usr(lua_state, usr) {
+            if print(lua_state, MultiValue::from_vec(vec![MluaValue::Error(e.clone())])).is_err() {
+                DMValue::world().call(
+                    "Error",
+                    &[&DMValue::from_string(format!(
+                        "Auxlua failed to print the following error when attempting to set dm.usr: {e}"
+                    ))
+                    .unwrap()],
+                );
+            }
+        };
 
         // Bind the function in a coroutine and run it
         let coroutine = err_as_string!(lua_state.create_thread(function));
@@ -841,7 +864,18 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
 
         // Set `dm.usr` to whatever `usr` currently is in BYOND
-        err_as_string!(set_usr(lua_state, usr));
+        #[allow(unused_must_use)]
+        if let Err(e) = set_usr(lua_state, usr) {
+            if print(lua_state, MultiValue::from_vec(vec![MluaValue::Error(e.clone())])).is_err() {
+                DMValue::world().call(
+                    "Error",
+                    &[&DMValue::from_string(format!(
+                        "Auxlua failed to print the following error when attempting to set dm.usr: {e}"
+                    ))
+                    .unwrap()],
+                );
+            }
+        };
 
         // Run the task
         let ret: LuaResult<MultiValue> = coroutine.resume(MultiValue::from_vec(resume_args));

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1]
+
+### Changed
+
+- Error logging for auxlua's internal mechanisms should be much more verbose.
+- Instead of runtiming when failing to set `dm.usr`, auxlua will first attempt to print the error using the `print` function. Failing that, it will call `world.Error` with the error message. This should now make it possible to unshadow `_G` if it was previously shadowed.
+
 ## [0.2.0]
 
 ### Fixed

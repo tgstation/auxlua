@@ -116,6 +116,7 @@ jobs:
       - name: Unzip Artifacts
         run: |
           cd ${{ steps.download_artifacts.outputs.download-path }}
+          ls -R
           unzip auxlua/auxlua.zip
           unzip auxlua.dll/auxlua.dll.zip
       - name: Get changelog

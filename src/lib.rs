@@ -79,13 +79,15 @@ fn first_border<'lua>(_: &'lua Lua, this: Table<'lua>) -> LuaResult<MluaValue<'l
 
 /// Gets the sleep flag
 fn get_sleep_flag(lua: &Lua) -> mlua::Result<MluaValue> {
-    let actual_globals: Table = lua.globals().get("_G")?;
+    let actual_globals: Table = lua.globals().get("_G")
+        .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
     actual_globals.raw_get("__sleep_flag")
 }
 
 /// Sets the sleep flag
 fn set_sleep_flag<'lua>(lua: &'lua Lua, enabled: MluaValue<'lua>) -> mlua::Result<()> {
-    let actual_globals: Table = lua.globals().get("_G")?;
+    let actual_globals: Table = lua.globals().get("_G")
+        .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
     actual_globals.set_readonly(false);
     actual_globals.raw_set("__sleep_flag", enabled)?;
     actual_globals.set_readonly(true);
@@ -94,11 +96,14 @@ fn set_sleep_flag<'lua>(lua: &'lua Lua, enabled: MluaValue<'lua>) -> mlua::Resul
 
 /// Sets the lua variable `dm.usr` to a weak reference to the passed in DM value
 fn set_usr(lua: &Lua, usr: &DMValue) -> mlua::Result<()> {
-    let actual_globals: Table = lua.globals().get("_G")?;
-    let dm_table: Table = actual_globals.raw_get("dm")?;
+    let actual_globals: Table = lua.globals().get("_G")
+        .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
+    let dm_table: Table = actual_globals.raw_get("dm")
+        .map_err(|e| external!("Error retrieving the dm table: {} (Was the dm table or the global table corrupted or shadowed?)", e))?;
     dm_table.set_readonly(false);
     let wrapped_usr = LuaModValue::try_from(usr).map_err(|e| external!(e.message))?;
-    dm_table.raw_set("usr", wrapped_usr)?;
+    dm_table.raw_set("usr", wrapped_usr)
+        .map_err(|e| external!("Error setting dm.usr: {} (Was the dm table or the global table corrupted or shadowed?)", e))?;
     dm_table.set_readonly(true);
     Ok(())
 }
@@ -107,9 +112,13 @@ fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
     PRINT_WRAPPER.with(|wrapper_cell| match &*wrapper_cell.borrow() {
         Some(wrapper_name) => {
             let wrapper_proc = Proc::find(wrapper_name)
-                .ok_or_else(|| specific_external!("{} not found", wrapper_name))?;
-            let dm_table: Table = lua.globals().get("dm")?;
-            let own_state_id: String = dm_table.get("state_id")?;
+                .ok_or_else(|| external!("{} not found", wrapper_name))?;
+            let actual_globals: Table = lua.globals().get("_G")
+                .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
+            let dm_table: Table = actual_globals.get("dm")
+                .map_err(|e| external!("Error retrieving the dm table: {} (Was the dm table or the global table corrupted or shadowed?)", e))?;
+            let own_state_id: String = dm_table.get("state_id")
+                .map_err(|e| external!("Error retrieving the internal state ID: {} (Was the dm table or the global table corrupted or shadowed?)", e))?;
 
             let state_key = STATES
                 .with(|state_map| {
@@ -122,8 +131,8 @@ fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
                     })
                 })
                 .ok_or_else(|| {
-                    specific_external!(
-                        "Somehow, the current state could not be found in auxlua's state map."
+                    external!(
+                        "The current state could not be found in auxlua's state map. (Was the dm table or the global table corrupted or shadowed?)"
                     )
                 })?;
 
@@ -387,8 +396,10 @@ fn get_task_table_info<'lua, S>(
 where
     S: Into<String>,
 {
-    let actual_globals: Table = lua.globals().get("_G")?;
-    let task_info_table: Table = actual_globals.raw_get("__task_info")?;
+    let actual_globals: Table = lua.globals().get("_G")
+        .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
+    let task_info_table: Table = actual_globals.raw_get("__task_info")
+        .map_err(|e| external!("Error retrieving the task info: {} (Was the task info table or the global table corrupted or shadowed?)", e))?;
     task_info_table.raw_get(coroutine.clone()).or_else(|_| {
         lua.create_table()
             .and_then(|table| {
@@ -405,40 +416,53 @@ fn handle_coroutine_return<T>(lua: &Lua, coroutine: Thread, name: T) -> LuaResul
 where
     T: Into<String>,
 {
-    let actual_globals: Table = lua.globals().get("_G")?;
-    let task_info_table: Table = actual_globals.raw_get("__task_info")?;
+    let actual_globals: Table = lua.globals().get("_G")
+        .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e))?;
+    let task_info_table: Table = actual_globals.raw_get("__task_info")
+        .map_err(|e| external!("Error retrieving the task info table: {} (Was the task info table or the global table corrupted or shadowed?)", e))?;
 
     // Set the task info table to not readonly - we will be modifying it
     task_info_table.set_readonly(false);
     if coroutine.status() == ThreadStatus::Resumable {
         // Check the sleep flag
-        let sleep_flag: MluaValue = get_sleep_flag(lua).map_err(|e| specific_external!(e))?;
+        let sleep_flag: MluaValue = get_sleep_flag(lua).map_err(|e| {
+            specific_external!(
+                "Error retrieving the sleep flag: {} (Was the global table corrupted or shadowed?)",
+                e
+            )
+        })?;
         if sleep_flag == mlua::Nil {
             // This is a yield -  get the yield table
             let yield_table: Table = actual_globals
                 .raw_get("__yield_table")
-                .map_err(|e| specific_external!(e))?;
+                .map_err(|e| external!("Error retrieving the yielded task table: {} (Was the yielded task table or the global table corrupted or shadowed?)", e))?;
 
             // Set the yield table to not readonly - we will be modifying it
             yield_table.set_readonly(false);
 
             // Get the first border - this is where the thread will be put in the yield table
-            let first_border = yield_table.len().map_err(|e| specific_external!(e))?;
+            let first_border = yield_table.len()
+            .map_err(|e| external!("Error getting the length of the yielded task table: {} (Was the yielded task table or the global table corrupted or shadowed", e))?;
 
             // Put the thread in the yield table
             yield_table
                 .raw_set(first_border + 1, coroutine.clone())
-                .map_err(|e| specific_external!(e))?;
+                .map_err(|e| external!("Error inserting yielded task into the yielded task table: {} (Was the yielded task table or the global table corrupted or shadowed?)", e))?;
 
             // Get or create the task info for this thread
-            let task_info = get_task_table_info(lua, coroutine, name)?;
+            let task_info = get_task_table_info(lua, coroutine, name)
+                .map_err(|e| external!("Error obtaining task info for yielded task: {}", e))?;
 
             // Set the task info to not readonly - we will be modifying it
             task_info.set_readonly(false);
 
             // Modify the task info
-            task_info.raw_set("status", "yield")?;
-            task_info.raw_set("index", first_border + 1)?;
+            task_info
+                .raw_set("status", "yield")
+                .map_err(|e| external!("Error recording status of yielded task: {}", e))?;
+            task_info
+                .raw_set("index", first_border + 1)
+                .map_err(|e| external!("Error recording index of yielded task: {}", e))?;
 
             // Set the task info to readonly - we are done modifying it
             task_info.set_readonly(true);
@@ -448,12 +472,12 @@ where
             return Ok(first_border + 1);
         } else {
             // Clear the sleep flag - We're past the only check for the sleep flag's value
-            set_sleep_flag(lua, mlua::Value::Nil)?;
+            set_sleep_flag(lua, mlua::Value::Nil).map_err(|e| external!("Error setting the sleep flag: {} (Was the global table corrupted or shadowed?)", e))?;
 
             // This is a sleep - get the sleep queue
             let sleep_queue: Table = actual_globals
                 .raw_get("__sleep_queue")
-                .map_err(|e| specific_external!(e))?;
+                .map_err(|e| external!("Error retrieving the sleep queue: {} (Was the sleep queue or the global table corrupted or shadowed?)", e))?;
 
             // Set the sleep queue to not readonly - we will be modifying it
             sleep_queue.set_readonly(false);
@@ -464,7 +488,7 @@ where
             // Enqueue the thread into the sleep queue
             sleep_queue
                 .raw_set(queue_len + 1, coroutine.clone())
-                .map_err(|e| specific_external!(e))?;
+                .map_err(|e| external!("Error enqueuing sleeping task: {}", e))?;
 
             // Get or create the task info for this thread
             let task_info = get_task_table_info(lua, coroutine, name)?;
@@ -473,8 +497,12 @@ where
             task_info.set_readonly(false);
 
             // Modify the task info
-            task_info.raw_set("status", "sleep")?;
-            task_info.raw_set("index", queue_len + 1)?;
+            task_info
+                .raw_set("status", "sleep")
+                .map_err(|e| external!("Error recording status of sleeping task: {}", e))?;
+            task_info
+                .raw_set("index", queue_len + 1)
+                .map_err(|e| external!("Error recording index of sleeping task: {}", e))?;
 
             // Set the task info to readonly - we are done modifying it
             task_info.set_readonly(true);
@@ -485,7 +513,8 @@ where
         }
     } else {
         // The task cannot be resumed - remove it from the info table
-        task_info_table.raw_remove(coroutine)?;
+        task_info_table.raw_remove(coroutine)
+        .map_err(|e| external!("Error removing finished or errored task from task info table: {} (Was the task info table or the global table corrupted or shadowed?)", e))?;
     }
 
     // Set the task info table to readonly - we're done modifying it
@@ -593,15 +622,17 @@ fn get_tasks(state: DMValue) {
         let ret: List = List::new();
 
         // Get the real, non-proxy global table
-        let actual_globals: Table = lua_state
-            .globals()
-            .get("_G")
-            .map_err(|e| specific_runtime!("{}", e))?;
+        let actual_globals: Table = lua_state.globals().get("_G").map_err(|e| {
+            specific_runtime!("Error obtaining the true global table: {} (Was the global table corrupted or shadowed?)", e)
+        })?;
 
         // Get the task info table
-        let task_info: Table = actual_globals
-            .raw_get("__task_info")
-            .map_err(|e| specific_runtime!("{}", e))?;
+        let task_info: Table = actual_globals.raw_get("__task_info").map_err(|e| {
+            specific_runtime!(
+                "Error obtaining the task info table: {} (Was the task info table or the global table corrupted or shadowed?)",
+                e
+            )
+        })?;
 
         // Iterate through the task info table
         for pair in task_info.pairs().filter_map(Result::ok) {
@@ -613,7 +644,12 @@ fn get_tasks(state: DMValue) {
             // Populate the list for the task info entry
             for info_pair in value.pairs() {
                 let (info_key, info_value): (DMValue, DMValue) = info_pair.map_or_else(
-                    |e| Err(specific_runtime!("{}", e)),
+                    |e| {
+                        Err(specific_runtime!(
+                            "Error while collecting tasks from task info table: {}",
+                            e
+                        ))
+                    },
                     |(k, v): (LuaModValue, LuaModValue)| {
                         Ok((DMValue::try_from(k)?, DMValue::try_from(v)?))
                     },
@@ -692,17 +728,37 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
 
         // Look for the function at the specified path
         let mut might_be_table_or_func: MluaValue = MluaValue::Table(globals);
+        let mut name_token: Option<String> = None;
+        let mut parent_token: Option<String> = None;
         for token in mapped_path {
             if let MluaValue::Table(t) = might_be_table_or_func {
                 // `pairs()`, which is used to iterate through the globals list
                 // to get its key-value pairs for `get_globals()`, does not
                 // invoke metamethods, so we use raw_get for the function search
+                if name_token.is_some() {
+                    parent_token = name_token;
+                }
+                name_token = Some(
+                    DMValue::try_from(token.clone())
+                        .and_then(|val| val.to_string())
+                        .unwrap_or_else(|_| String::from("UNPRINTABLE")),
+                );
                 might_be_table_or_func = err_as_string!(t.raw_get(token));
             } else {
                 break;
             }
         }
-        let function = err_as_string!(Function::from_lua(might_be_table_or_func, lua_state));
+        let function =
+            err_as_string!(Function::from_lua(might_be_table_or_func.clone(), lua_state).map_err(|_| {
+                let name: String = name_token.unwrap();
+                let message: String = match (might_be_table_or_func.type_name(), parent_token) {
+                    ("nil", None) => format!("Unable to find field \"{name}\" of the global table. Did you declare it as a global or a local?"),
+                    ("nil", Some(parent_name)) => format!("Unable to find field \"{name}\" of the table \"{parent_name}\""),
+                    (typename, None) => format!("Field \"{name}\" of the global table is a {typename} (expected table or function)"),
+                    (typename, Some(parent_name)) => format!("Field \"{name}\" of the table \"{parent_name}\" is a {typename} (expected table or function)")
+                };
+                external!(message)
+            }));
 
         // Start the execution timer
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
@@ -754,9 +810,15 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
             .collect::<Result<Vec<MluaValue>, Runtime>>()?;
 
         // Get the task from the yield table
-        let actual_globals: Table = err_as_string!(lua_state.globals().get("_G"));
-        let yield_table: Table = err_as_string!(actual_globals.raw_get("__yield_table"));
-        let coroutine: Thread = err_as_string!(yield_table.raw_get(table_index));
+        let actual_globals: Table = err_as_string!(
+            lua_state.globals().get("_G")
+            .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e)));
+        let yield_table: Table = err_as_string!(
+            actual_globals.raw_get("__yield_table")
+            .map_err(|e| external!("Error retrieving the yielded task table: {} (Was the yielded task table or the global table corrupted or shadowed?)", e)));
+        let coroutine: Thread = err_as_string!(
+            yield_table.raw_get(table_index)
+            .map_err(|e| external!("Error retrieving yielded task at index {}: {} (Was the yielded task table or the global table corrupted or shadowed?)", table_index, e)));
 
         // Remove the task from the yield table - if the task yields again,
         // it will be put back into the yield table by handle_coroutine_return
@@ -765,9 +827,15 @@ fn resume(state: DMValue, index: DMValue, arguments: DMValue) {
         yield_table.set_readonly(true);
 
         // Get the task's name from the task info table
-        let task_info_table: Table = err_as_string!(actual_globals.get("__task_info"));
-        let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
-        let function_name = err_as_string!(this_tasks_info.raw_get("name"));
+        let task_info_table: Table = err_as_string!(
+            actual_globals.get("__task_info")
+            .map_err(|e| external!("Error retrieving the task info table: {} (Was the task info table or the global table corrupted or shadowed?)", e)));
+        let this_tasks_info: Table = err_as_string!(
+            task_info_table.raw_get(coroutine.clone())
+            .map_err(|e| external!("Error retrieving info for task being resumed: {} (Was the task info table or the global table corrupted or shadowed?)", e)));
+        let function_name = err_as_string!(
+            this_tasks_info.raw_get("name")
+            .map_err(|e| external!("Error retrieving name of task being resumed: {} (Was the task info, the task info table, or the global table corrupted or shadowed?)", e)));
 
         // Start the execution timer
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());
@@ -806,9 +874,15 @@ fn awaken(state: DMValue) {
             .ok_or_else(|| specific_runtime!("No lua state at {}", key))?;
 
         // Get the front task of the sleep queue
-        let actual_globals: Table = err_as_string!(lua_state.globals().get("_G"));
-        let sleep_queue: Table = err_as_string!(actual_globals.get("__sleep_queue"));
-        let coroutine: Thread = err_as_string!(sleep_queue.raw_get(1));
+        let actual_globals: Table = err_as_string!(
+            lua_state.globals().get("_G")
+            .map_err(|e| external!("Error retrieving the true global table: {} (Was the global table corrupted or shadowed?)", e)));
+        let sleep_queue: Table = err_as_string!(
+            actual_globals.get("__sleep_queue")
+            .map_err(|e| external!("Error retrieving the sleep queue: {} (Was the sleep queue or the global table corrupted or shadowed?)", e)));
+        let coroutine: Thread = err_as_string!(
+            sleep_queue.raw_get(1)
+            .map_err(|e| external!("Error retrieving the task at the start of the sleep queue: {} (Was the sleep queue or the global table corrupted or shadowed?)", e)));
 
         // Remove the task from the sleep queue
         sleep_queue.set_readonly(false);
@@ -816,9 +890,15 @@ fn awaken(state: DMValue) {
         sleep_queue.set_readonly(true);
 
         // Get the name of the task
-        let task_info_table: Table = err_as_string!(actual_globals.get("__task_info"));
-        let this_tasks_info: Table = err_as_string!(task_info_table.raw_get(coroutine.clone()));
-        let function_name = err_as_string!(this_tasks_info.raw_get("name"));
+        let task_info_table: Table = err_as_string!(
+            actual_globals.get("__task_info")
+            .map_err(|e| external!("Error retrieving the task info table: {} (Was the task info table or the global table corrupted or shadowed?)", e)));
+        let this_tasks_info: Table = err_as_string!(
+            task_info_table.raw_get(coroutine.clone())
+            .map_err(|e| external!("Error retrieving info for task being awakened: {} (Was the task info table or the global table corrupted or shadowed?)", e)));
+        let function_name = err_as_string!(
+            this_tasks_info.raw_get("name")
+            .map_err(|e| external!("Error retrieving name of task being awakened: {} (Was the task info, the task info table, or the global table corrupted or shadowed?)", e)));
 
         // Start the execution timer
         LUA_THREAD_START.with(|start| *start.borrow_mut() = Instant::now());

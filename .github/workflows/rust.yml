@@ -113,12 +113,6 @@ jobs:
         uses: actions/download-artifact@v2
         with:
           path: artifacts
-      - name: Unzip Artifacts
-        run: |
-          cd ${{ steps.download_artifacts.outputs.download-path }}
-          ls -R
-          unzip auxlua/auxlua.zip
-          unzip auxlua.dll/auxlua.dll.zip
       - name: Get changelog
         run: |
           VERSION=`grep -Po '(?<=^version = ")([^"]+)' ./Cargo.toml`
@@ -144,7 +138,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/libauxlua.so
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua/libauxlua.so
           asset_name: libauxlua.so
           asset_content_type: application/octet-stream
       - name: Upload Windows build
@@ -153,6 +147,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll/auxlua.dll
           asset_name: auxlua.dll
           asset_content_type: application/octet-stream

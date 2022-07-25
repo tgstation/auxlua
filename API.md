@@ -48,6 +48,10 @@ Equivalent to DM's `list.Add(value)`
 
 Converts a DM list into a lua table.
 
+### list:of_type(type_path)
+
+Will extract only values of type `type_path`.
+
 ---
 
 ## The dm table

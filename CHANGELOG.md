@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `of_type` method to DM lists, which filters by typepath. For instance, `mob_list:of_type("/mob/living/carbon/human")`.
+- Added an `__iter` metamethod to DM lists, meaning you no longer need to call `to_table()` when iterating.
+
 ## [0.2.1]
 
 ### Changed

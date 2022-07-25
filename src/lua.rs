@@ -177,6 +177,63 @@ impl UserData for ListWrapper {
                 .and_then(tablify_list)
                 .map_err(|e| external!(e.message))
         });
+
+        methods.add_method("of_type", |_, this, type_path: String| {
+            if !type_path.starts_with('/') {
+                return Err(external!("type path must start with '/'"));
+            }
+
+            let filter_type_split = type_path.split('/').collect::<Vec<_>>();
+
+            this.value
+                .as_list()
+                .map_err(|_| runtime!("not a list"))
+                .and_then(tablify_list)
+                .map(|value| {
+                    let table = match value {
+                        Value::List(list) => list,
+                        _ => unreachable!("tablify_list did not return a table"),
+                    };
+
+                    Value::List(
+                        table
+                            .into_iter()
+                            .filter(|(_, value)| {
+                                let weak_datum = match value {
+                                    Value::Datum(weak_datum) => weak_datum,
+                                    _ => return false,
+                                };
+
+                                let datum = match weak_datum.upgrade() {
+                                    Some(datum) => datum,
+                                    None => return false,
+                                };
+
+                                let datum_type = match datum.get_type() {
+                                    Ok(datum_type) => datum_type,
+                                    Err(_) => return false,
+                                };
+
+                                // Support :of_type("/mob") with types like "/mob/living/carbon/human"
+                                let type_split = datum_type.split('/');
+
+                                type_split.zip(&filter_type_split).all(
+                                    |(type_part, filter_type_part)| type_part == *filter_type_part,
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .map_err(|e| external!(e.message))
+        });
+
+        methods.add_meta_method(mlua::MetaMethod::Iter, |lua, this, ()| {
+            Ok((
+                lua.globals().get::<_, mlua::Function>("next")?,
+                tablify_list(this.value.as_list().map_err(|_| external!("not a list"))?)
+                    .map_err(|e| external!(e.message))?,
+            ))
+        });
     }
 }
 

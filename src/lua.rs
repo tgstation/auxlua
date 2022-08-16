@@ -128,7 +128,7 @@ where
     T: Clone + Into<DMValue>,
 {
     fn eq(&self, other: &T) -> bool {
-        DMValue::from(self.clone()) == other.clone().into()
+        *self == other.clone().into()
     }
 }
 
@@ -328,7 +328,7 @@ where
         .and_then(tablify_list)
         .map(|value| {
             let table = match value {
-                Value::List(list) => list.clone(),
+                Value::List(list) => list,
                 _ => unreachable!("tablify_list did not return a table"),
             };
 
@@ -550,7 +550,7 @@ fn datum_get_var(datum: &DMValue, var: String) -> DMResult<Value> {
             | ValueTag::TurfVisLocs
             | ValueTag::ObjVisLocs
             | ValueTag::MobVisLocs
-            | ValueTag::ImageVars => Ok(Value::DatumList(value.as_weak()?, value.clone())),
+            | ValueTag::ImageVars => Ok(Value::DatumList(value.as_weak()?, value)),
             _ => Value::try_from(&value),
         })
     })
@@ -586,7 +586,7 @@ fn datum_truthiness(_: &Lua, arg: Value) -> mlua::Result<bool> {
     Ok(match arg {
         Value::Null => true,
         Value::Number(n) => n == 0.0,
-        Value::String(s) => s.len() == 0,
+        Value::String(s) => s.is_empty(),
         Value::Datum(weak) => weak.upgrade().is_none(),
         Value::DatumList(weak, _) => weak.upgrade().is_none(),
         _ => false,
@@ -892,11 +892,9 @@ fn get_cached_userdata<'lua>(lua: &'lua Lua, value: &Value) -> mlua::Result<mlua
         Some(userdata) => Ok(mlua::Value::UserData(userdata)),
         None => {
             let new_userdata = mlua::Value::UserData(match value {
-                Value::Datum(weak) => lua.create_userdata(DatumWrapper {
-                    value: weak.clone(),
-                }),
+                Value::Datum(weak) => lua.create_userdata(DatumWrapper { value: *weak }),
                 Value::DatumList(weak, list) => lua.create_userdata(DatumTiedList {
-                    parent_value: weak.clone(),
+                    parent_value: *weak,
                     value: list.clone(),
                 }),
                 Value::ListRef(list) => lua.create_userdata(ListWrapper {
@@ -947,7 +945,7 @@ impl PartialEq for Value {
                 _ => false,
             },
             Self::List(l) => match other {
-                Self::List(l2) => l.borrow().deref() as *const _ == l2.borrow().deref() as *const _,
+                Self::List(l2) => std::ptr::eq(l.borrow().deref(), l2.borrow().deref()),
                 _ => false,
             },
             Self::DatumList(w, l) => match w.upgrade() {
@@ -1040,12 +1038,14 @@ impl TryFrom<&DMValue> for Value {
     }
 }
 
+type ListConversionCell = RefCell<Vec<(Value, Value)>>;
+
 impl TryFrom<Value> for DMValue {
     type Error = Runtime;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         fn list_converter(
-            vec: Rc<RefCell<Vec<(Value, Value)>>>,
-            visited: &mut Vec<(Rc<RefCell<Vec<(Value, Value)>>>, DMValue)>,
+            vec: Rc<ListConversionCell>,
+            visited: &mut Vec<(Rc<ListConversionCell>, DMValue)>,
         ) -> Result<DMValue, Runtime> {
             let len = vec.borrow().iter().fold(0, |max, elem| {
                 let (key, _) = elem;
@@ -1062,7 +1062,7 @@ impl TryFrom<Value> for DMValue {
             for (key, value) in vec.borrow().iter() {
                 let converted_key = match key {
                     Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
-                        if raw.borrow().deref() as *const _ == vec.borrow().deref() as *const _ {
+                        if std::ptr::eq(raw.borrow().deref(), vec.borrow().deref()) {
                             Some(converted.clone())
                         } else {
                             None
@@ -1111,8 +1111,8 @@ impl TryFrom<Value> for DMValue {
 impl<'lua> ToLua<'lua> for Value {
     fn to_lua(self, lua: &mlua::Lua) -> mlua::Result<MluaValue> {
         fn list_converter<'lua>(
-            vec: Rc<RefCell<Vec<(Value, Value)>>>,
-            visited: &mut Vec<(Rc<RefCell<Vec<(Value, Value)>>>, Table<'lua>)>,
+            vec: Rc<ListConversionCell>,
+            visited: &mut Vec<(Rc<ListConversionCell>, Table<'lua>)>,
             lua: &'lua Lua,
         ) -> mlua::Result<Table<'lua>> {
             let table = lua.create_table()?;
@@ -1120,7 +1120,7 @@ impl<'lua> ToLua<'lua> for Value {
             for (key, value) in vec.borrow().iter() {
                 let converted_key = match key {
                     Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
-                        if raw.borrow().deref() as *const _ == vec.borrow().deref() as *const _ {
+                        if std::ptr::eq(raw.borrow().deref(), vec.borrow().deref()) {
                             Some(converted.clone())
                         } else {
                             None
@@ -1152,71 +1152,59 @@ impl<'lua> ToLua<'lua> for Value {
             Self::Null => Ok(mlua::Nil),
             Self::Number(n) => Ok(MluaValue::Number(n as f64)),
             Self::String(s) => Ok(MluaValue::String(lua.create_string(&s)?)),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                 ValueTag::MobVars
                 | ValueTag::ObjVars
                 | ValueTag::TurfVars
                 | ValueTag::AreaVars
                 | ValueTag::ClientVars
                 | ValueTag::ImageVars
-                | ValueTag::Vars => true,
-                _ => false,
-            } => Err(ToLuaConversionError{
+                | ValueTag::Vars) => Err(ToLuaConversionError{
                 from: "datum vars",
                 to: "userdata",
                 message: Some(String::from("Cannot guarantee the validity of vars lists without a weak reference to the datum they are a variable of. Use datum:get_var(\"vars\") instead."))}),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                     ValueTag::MobContents
                     | ValueTag::TurfContents
                     | ValueTag::AreaContents
-                    | ValueTag::ObjContents => true,
-                    _ => false,
-            } => Err(ToLuaConversionError{
+                    | ValueTag::ObjContents) => Err(ToLuaConversionError{
                         from: "atom contents",
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom contents lists without a weak reference to the atom they are a variable of. Use datum:get_var(\"contents\") instead."))
                     }),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                     ValueTag::MobOverlays
                     | ValueTag::ObjOverlays
                     | ValueTag::TurfOverlays
                     | ValueTag::AreaOverlays
-                    | ValueTag::ImageOverlays => true,
-                    _ => false,
-            } => Err(ToLuaConversionError{
+                    | ValueTag::ImageOverlays) => Err(ToLuaConversionError{
                         from: "atom overlays",
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom overlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"overlays\") instead."))
                     }),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                     ValueTag::ObjUnderlays
                     | ValueTag::MobUnderlays
                     | ValueTag::TurfUnderlays
                     | ValueTag::AreaUnderlays
-                    | ValueTag::ImageUnderlays => true,
-                    _ => false,
-            } => Err(ToLuaConversionError{
+                    | ValueTag::ImageUnderlays) => Err(ToLuaConversionError{
                         from: "atom underlays",
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom underlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"underlays\") instead."))
                     }),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                     ValueTag::TurfVisContents
                     | ValueTag::ObjVisContents
                     | ValueTag::MobVisContents
-                    | ValueTag::ImageVisContents => true,
-                    _ => false,
-            } => Err(ToLuaConversionError{
+                    | ValueTag::ImageVisContents) => Err(ToLuaConversionError{
                         from: "atom vis_contents",
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom vis_contents lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_contents\") instead."))
                     }),
-            Self::ListRef(l) if match l.raw.tag {
+            Self::ListRef(l) if matches!(l.raw.tag,
                     ValueTag::TurfVisLocs
                     | ValueTag::ObjVisLocs
-                    | ValueTag::MobVisLocs => true,
-                    _ => false,
-            } => Err(ToLuaConversionError{
+                    | ValueTag::MobVisLocs) => Err(ToLuaConversionError{
                         from: "atom vis_locs",
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom vis_locs lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_locs\") instead."))
@@ -1233,10 +1221,10 @@ impl<'lua> FromLua<'lua> for Value {
     fn from_lua(value: MluaValue, lua: &mlua::Lua) -> mlua::Result<Self> {
         fn table_conversion<'lua>(
             table: Table<'lua>,
-            visited: &mut Vec<(*const c_void, Rc<RefCell<Vec<(Value, Value)>>>)>,
+            visited: &mut Vec<(*const c_void, Rc<ListConversionCell>)>,
             lua: &Lua,
         ) -> mlua::Result<Value> {
-            let list: Rc<RefCell<Vec<(Value, Value)>>> = Rc::new(RefCell::new(vec![]));
+            let list: Rc<ListConversionCell> = Rc::new(RefCell::new(vec![]));
             visited.push((table.to_pointer(), list.clone()));
             for pair in table.pairs() {
                 let (key, value): (MluaValue, MluaValue) = pair?;
@@ -1288,11 +1276,11 @@ impl<'lua> FromLua<'lua> for Value {
                     Ok(Self::ListRef(list.value.clone()))
                 } else if let Ok(tied_list) = ud.borrow::<DatumTiedList>() {
                     Ok(Self::DatumList(
-                        tied_list.parent_value.clone(),
+                        tied_list.parent_value,
                         tied_list.value.clone(),
                     ))
                 } else if let Ok(datum) = ud.borrow::<DatumWrapper>() {
-                    Ok(Self::Datum(datum.value.clone()))
+                    Ok(Self::Datum(datum.value))
                 } else if let Ok(global) = ud.borrow::<GlobalWrapper>() {
                     Ok(Self::Global(global.value.clone()))
                 } else if let Ok(generic) = ud.borrow::<GenericWrapper>() {

@@ -127,8 +127,9 @@ impl<T> PartialEq<T> for DatumTiedList
 where
     T: Clone + Into<DMValue>,
 {
+    #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &T) -> bool {
-        *self == other.clone().into()
+        DMValue::from(self.clone()) == other.clone().into()
     }
 }
 

@@ -1,13 +1,19 @@
 use auxtools::{
     raw_types::values::ValueTag, runtime, DMResult, List, Proc, Runtime, StringRef, WeakValue,
 };
-use mlua::{FromLua, Lua, MultiValue, ToLua, UserData, UserDataFields, UserDataMethods};
+use mlua::{
+    AnyUserData, Error::ToLuaConversionError, FromLua, Function, Lua, MetaMethod, MultiValue,
+    Table, ToLua, UserData, UserDataFields, UserDataMethods,
+};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
-use std::iter::FromIterator;
+use std::ops::Deref;
+use std::os::raw::c_void;
+use std::rc::Rc;
 use std::time::Instant;
 
 pub type DMValue = auxtools::Value;
@@ -71,6 +77,10 @@ impl AuxluaError {
     }
 }
 
+trait TryIntoValue {
+    fn try_into_value(&self) -> mlua::Result<DMValue>;
+}
+
 #[derive(Clone)]
 pub struct ListWrapper {
     pub value: DMValue,
@@ -91,149 +101,341 @@ where
     }
 }
 
+impl TryIntoValue for ListWrapper {
+    fn try_into_value(&self) -> mlua::Result<DMValue> {
+        Ok(self.value.clone())
+    }
+}
+
+#[derive(Clone)]
+pub struct DatumTiedList {
+    pub parent_value: WeakValue,
+    pub value: DMValue,
+}
+
+impl From<DatumTiedList> for DMValue {
+    fn from(list: DatumTiedList) -> Self {
+        if list.parent_value.upgrade().is_some() {
+            list.value
+        } else {
+            DMValue::null()
+        }
+    }
+}
+
+impl<T> PartialEq<T> for DatumTiedList
+where
+    T: Clone + Into<DMValue>,
+{
+    fn eq(&self, other: &T) -> bool {
+        DMValue::from(self.clone()) == other.clone().into()
+    }
+}
+
+impl TryIntoValue for DatumTiedList {
+    fn try_into_value(&self) -> mlua::Result<DMValue> {
+        if self.parent_value.upgrade().is_some() {
+            Ok(self.value.clone())
+        } else {
+            Err(external!("list tied to deleted datum"))
+        }
+    }
+}
+
+fn list_len<T>(_: &Lua, list: &T) -> mlua::Result<u32>
+where
+    T: TryIntoValue,
+{
+    list.try_into_value()?
+        .as_list()
+        .map_err(|_| external!("not a list"))
+        .map(|list| list.len())
+}
+
+fn list_get<T>(_: &Lua, list: &T, key: Value) -> mlua::Result<Value>
+where
+    T: TryIntoValue,
+{
+    list.try_into_value()?
+        .as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(|list| {
+            DMValue::try_from(key)
+                .and_then(|key_val| list.get(key_val).and_then(|value| Value::try_from(&value)))
+        })
+        .map_err(|e| external!(e.message))
+}
+
+fn list_set<T>(_: &Lua, list: &T, (key, value): (Value, Value)) -> mlua::Result<()>
+where
+    T: TryIntoValue,
+{
+    let list = list.try_into_value()?;
+    match list.raw.tag {
+        ValueTag::MobVars
+        | ValueTag::ObjVars
+        | ValueTag::TurfVars
+        | ValueTag::AreaVars
+        | ValueTag::ClientVars
+        | ValueTag::Vars
+        | ValueTag::ImageVars
+        | ValueTag::WorldVars
+        | ValueTag::GlobalVars => {
+            if SET_VAR_WRAPPER.with(|wrapper| wrapper.borrow().is_some()) {
+                return Err(external!(
+                    "Cannot modify vars lists when a var-setting wrapper proc is set."
+                ));
+            }
+        }
+        ValueTag::MobContents
+        | ValueTag::TurfContents
+        | ValueTag::AreaContents
+        | ValueTag::ObjContents => {
+            return Err(external!(
+                "Cannot directly modify contents lists. Set the elements' \"loc\" var instead."
+            ))
+        }
+        ValueTag::TurfVisContents
+        | ValueTag::ObjVisContents
+        | ValueTag::MobVisContents
+        | ValueTag::ImageVisContents => {
+            return Err(external!(
+                "Cannot modify vis_contents lists by index. Use \"add\" or \"remove\" instead."
+            ))
+        }
+        ValueTag::TurfVisLocs | ValueTag::ObjVisLocs | ValueTag::MobVisLocs => {
+            return Err(external!("Cannot modify vis_locs lists."))
+        }
+        _ => (),
+    };
+    list.as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(|list| {
+            DMValue::try_from(key).and_then(|key_val| list.set(key_val, DMValue::try_from(value)?))
+        })
+        .map_err(|e| external!(e.message))
+}
+
+fn list_add<T>(_: &Lua, list: &T, elem: Value) -> mlua::Result<()>
+where
+    T: TryIntoValue,
+{
+    let list = list.try_into_value()?;
+    match list.raw.tag {
+        ValueTag::MobVars
+        | ValueTag::ObjVars
+        | ValueTag::TurfVars
+        | ValueTag::AreaVars
+        | ValueTag::ClientVars
+        | ValueTag::Vars
+        | ValueTag::ImageVars
+        | ValueTag::WorldVars
+        | ValueTag::GlobalVars => return Err(external!("Cannot add to vars lists")),
+        ValueTag::MobContents
+        | ValueTag::TurfContents
+        | ValueTag::AreaContents
+        | ValueTag::ObjContents => {
+            return Err(external!(
+                "Cannot directly modify contents lists. Set the elements' \"loc\" var instead."
+            ))
+        }
+        ValueTag::ArgList => return Err(external!("Cannot add to args lists")),
+        ValueTag::TurfVisContents
+        | ValueTag::ObjVisContents
+        | ValueTag::MobVisContents
+        | ValueTag::ImageVisContents => {
+            let thing: DMValue =
+                DMValue::try_from(elem.clone()).map_err(|e| external!(e.message))?;
+            match thing.raw.tag {
+                ValueTag::Obj | ValueTag::Turf | ValueTag::Mob | ValueTag::Image => (),
+                _ => {
+                    return Err(external!(
+                        "vis_contents lists only accept turfs and movable atoms."
+                    ))
+                }
+            }
+        }
+        ValueTag::TurfVisLocs | ValueTag::ObjVisLocs | ValueTag::MobVisLocs => {
+            return Err(external!("Cannot modify vis_locs lists."))
+        }
+        _ => (),
+    };
+    list.as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(|list| DMValue::try_from(elem).map(|elem_val| list.append(elem_val)))
+        .map_err(|e| external!(e.message))
+}
+
+fn list_remove<T>(_: &Lua, list: &T, elem: Value) -> mlua::Result<()>
+where
+    T: TryIntoValue,
+{
+    let list = list.try_into_value()?;
+    match list.raw.tag {
+        ValueTag::MobVars
+        | ValueTag::ObjVars
+        | ValueTag::TurfVars
+        | ValueTag::AreaVars
+        | ValueTag::ClientVars
+        | ValueTag::Vars
+        | ValueTag::ImageVars
+        | ValueTag::WorldVars
+        | ValueTag::GlobalVars => return Err(external!("Cannot remove from vars-type lists")),
+        ValueTag::ArgList => return Err(external!("Cannot remove from args lists")),
+        ValueTag::MobContents
+        | ValueTag::TurfContents
+        | ValueTag::AreaContents
+        | ValueTag::ObjContents => {
+            return Err(external!(
+                "Cannot directly modify contents lists. Set the elements' \"loc\" var instead."
+            ))
+        }
+        ValueTag::TurfVisLocs | ValueTag::ObjVisLocs | ValueTag::MobVisLocs => {
+            return Err(external!("Cannot modify vis_locs lists."))
+        }
+        _ => (),
+    };
+    list.as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(|list| DMValue::try_from(elem).map(|elem_val| list.remove(elem_val)))
+        .map_err(|e| external!(e.message))
+}
+
+fn list_to_table<T>(_: &Lua, list: &T, _: ()) -> mlua::Result<Value>
+where
+    T: TryIntoValue,
+{
+    list.try_into_value()?
+        .as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(tablify_list)
+        .map_err(|e| external!(e.message))
+}
+
+fn list_of_type<T>(_: &Lua, list: &T, type_path: String) -> mlua::Result<Value>
+where
+    T: TryIntoValue,
+{
+    if !type_path.starts_with('/') {
+        return Err(external!("type path must start with '/'"));
+    }
+
+    let filter_type_split = type_path.split('/').collect::<Vec<_>>();
+
+    list.try_into_value()?
+        .as_list()
+        .map_err(|_| runtime!("not a list"))
+        .and_then(tablify_list)
+        .map(|value| {
+            let table = match value {
+                Value::List(list) => list.clone(),
+                _ => unreachable!("tablify_list did not return a table"),
+            };
+
+            let filtered_table = table
+                .borrow()
+                .iter()
+                .filter(|(_, value)| {
+                    let weak_datum = match value {
+                        Value::Datum(weak_datum) => weak_datum,
+                        _ => return false,
+                    };
+
+                    let datum = match weak_datum.upgrade() {
+                        Some(datum) => datum,
+                        None => return false,
+                    };
+
+                    let datum_type = match datum.get_type() {
+                        Ok(datum_type) => datum_type,
+                        Err(_) => return false,
+                    };
+
+                    // Support :of_type("/mob") with types like "/mob/living/carbon/human"
+                    let type_split = datum_type.split('/');
+
+                    type_split
+                        .zip(&filter_type_split)
+                        .all(|(type_part, filter_type_part)| type_part == *filter_type_part)
+                })
+                .cloned()
+                .collect();
+
+            Value::List(Rc::new(RefCell::new(filtered_table)))
+        })
+        .map_err(|e| external!(e.message))
+}
+
+fn list_iter<'lua, T>(lua: &'lua Lua, list: &T, _: ()) -> mlua::Result<(Function<'lua>, Value)>
+where
+    T: TryIntoValue,
+{
+    Ok((
+        lua.globals().get::<_, mlua::Function>("next")?,
+        tablify_list(
+            list.try_into_value()?
+                .as_list()
+                .map_err(|_| external!("not a list"))?,
+        )
+        .map_err(|e| external!(e.message))?,
+    ))
+}
+
 impl UserData for ListWrapper {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("len", |_, this| {
-            this.value
-                .as_list()
-                .map_err(|_| external!("not a list"))
-                .map(|list| list.len())
-        });
+        fields.add_field_method_get("len", list_len);
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::ToString, datum_to_string);
+        methods.add_function("is_null", datum_truthiness);
+        methods.add_meta_method(MetaMethod::Len, |lua, this, ()| list_len(lua, this));
 
-        methods.add_method("get", |_, this, key: Value| {
-            this.value
-                .as_list()
-                .map_err(|_| runtime!("not a list"))
-                .and_then(|list| {
-                    DMValue::try_from(key).and_then(|key_val| {
-                        list.get(key_val).and_then(|value| Value::try_from(&value))
-                    })
-                })
-                .map_err(|e| external!(e.message))
-        });
+        methods.add_method("get", list_get);
+        methods.add_meta_method(MetaMethod::Index, list_get);
 
-        methods.add_method("set", |_, this, (key, value): (Value, Value)| {
-            match this.value.raw.tag {
-                ValueTag::MobVars
-                | ValueTag::ObjVars
-                | ValueTag::TurfVars
-                | ValueTag::AreaVars
-                | ValueTag::ClientVars
-                | ValueTag::Vars
-                | ValueTag::ImageVars
-                | ValueTag::WorldVars
-                | ValueTag::GlobalVars => {
-                    if SET_VAR_WRAPPER.with(|wrapper| wrapper.borrow().is_some()) {
-                        return Err(external!(
-                            "Cannot edit vars-type lists when a var-setting wrapper proc is set."
-                        ));
-                    }
-                }
-                _ => (),
-            };
-            this.value
-                .as_list()
-                .map_err(|_| runtime!("not a list"))
-                .and_then(|list| {
-                    DMValue::try_from(key)
-                        .and_then(|key_val| list.set(key_val, DMValue::try_from(value)?))
-                })
-                .map_err(|e| external!(e.message))
-        });
+        methods.add_method("set", list_set);
+        methods.add_meta_method(MetaMethod::NewIndex, list_set);
 
-        methods.add_method("add", |_, this, elem: Value| {
-            match this.value.raw.tag {
-                ValueTag::MobVars
-                | ValueTag::ObjVars
-                | ValueTag::TurfVars
-                | ValueTag::AreaVars
-                | ValueTag::ClientVars
-                | ValueTag::Vars
-                | ValueTag::ImageVars
-                | ValueTag::WorldVars
-                | ValueTag::GlobalVars => return Err(external!("Cannot add to vars-type lists")),
-                _ => (),
-            };
-            this.value
-                .as_list()
-                .map_err(|_| runtime!("not a list"))
-                .and_then(|list| {
-                    DMValue::try_from(elem).map(|elem_val| {
-                        list.append(elem_val);
-                        mlua::Nil
-                    })
-                })
-                .map_err(|e| external!(e.message))
-        });
+        methods.add_method("add", list_add);
 
-        methods.add_method("to_table", |_, this, _: MultiValue| {
-            this.value
-                .as_list()
-                .map_err(|_| runtime!("not a list"))
-                .and_then(tablify_list)
-                .map_err(|e| external!(e.message))
-        });
+        methods.add_method("remove", list_remove);
 
-        methods.add_method("of_type", |_, this, type_path: String| {
-            if !type_path.starts_with('/') {
-                return Err(external!("type path must start with '/'"));
-            }
+        methods.add_method("to_table", list_to_table);
 
-            let filter_type_split = type_path.split('/').collect::<Vec<_>>();
+        methods.add_method("of_type", list_of_type);
 
-            this.value
-                .as_list()
-                .map_err(|_| runtime!("not a list"))
-                .and_then(tablify_list)
-                .map(|value| {
-                    let table = match value {
-                        Value::List(list) => list,
-                        _ => unreachable!("tablify_list did not return a table"),
-                    };
+        methods.add_meta_method(MetaMethod::Iter, list_iter);
+    }
+}
 
-                    Value::List(
-                        table
-                            .into_iter()
-                            .filter(|(_, value)| {
-                                let weak_datum = match value {
-                                    Value::Datum(weak_datum) => weak_datum,
-                                    _ => return false,
-                                };
+impl UserData for DatumTiedList {
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("len", list_len);
+    }
 
-                                let datum = match weak_datum.upgrade() {
-                                    Some(datum) => datum,
-                                    None => return false,
-                                };
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_function(MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::ToString, datum_to_string);
+        methods.add_function("is_null", datum_truthiness);
+        methods.add_meta_method(MetaMethod::Len, |lua, this, ()| list_len(lua, this));
 
-                                let datum_type = match datum.get_type() {
-                                    Ok(datum_type) => datum_type,
-                                    Err(_) => return false,
-                                };
+        methods.add_method("get", list_get);
+        methods.add_meta_method(MetaMethod::Index, list_get);
 
-                                // Support :of_type("/mob") with types like "/mob/living/carbon/human"
-                                let type_split = datum_type.split('/');
+        methods.add_method("set", list_set);
+        methods.add_meta_method(MetaMethod::NewIndex, list_set);
 
-                                type_split.zip(&filter_type_split).all(
-                                    |(type_part, filter_type_part)| type_part == *filter_type_part,
-                                )
-                            })
-                            .collect(),
-                    )
-                })
-                .map_err(|e| external!(e.message))
-        });
+        methods.add_method("add", list_add);
 
-        methods.add_meta_method(mlua::MetaMethod::Iter, |lua, this, ()| {
-            Ok((
-                lua.globals().get::<_, mlua::Function>("next")?,
-                tablify_list(this.value.as_list().map_err(|_| external!("not a list"))?)
-                    .map_err(|e| external!(e.message))?,
-            ))
-        });
+        methods.add_method("remove", list_remove);
+
+        methods.add_method("to_table", list_to_table);
+
+        methods.add_method("of_type", list_of_type);
+
+        methods.add_meta_method(MetaMethod::Iter, list_iter);
     }
 }
 
@@ -252,7 +454,7 @@ pub fn tablify_list(list: auxtools::List) -> DMResult<Value> {
             vec.push((Value::Number(i as f32), Value::try_from(key)?))
         }
     }
-    Ok(Value::List(vec))
+    Ok(Value::List(Rc::new(RefCell::new(vec))))
 }
 
 #[derive(Copy, Clone)]
@@ -318,6 +520,42 @@ fn datum_call_proc<'lua>(
     }
 }
 
+fn datum_get_var(datum: &DMValue, var: String) -> DMResult<Value> {
+    StringRef::from_raw(var.as_bytes()).and_then(|var_ref| {
+        datum.get(var_ref).and_then(|value| match value.raw.tag {
+            ValueTag::MobContents
+            | ValueTag::TurfContents
+            | ValueTag::AreaContents
+            | ValueTag::ObjContents
+            | ValueTag::MobVars
+            | ValueTag::ObjVars
+            | ValueTag::TurfVars
+            | ValueTag::AreaVars
+            | ValueTag::ClientVars
+            | ValueTag::Vars
+            | ValueTag::MobOverlays
+            | ValueTag::MobUnderlays
+            | ValueTag::ObjOverlays
+            | ValueTag::ObjUnderlays
+            | ValueTag::TurfOverlays
+            | ValueTag::TurfUnderlays
+            | ValueTag::AreaOverlays
+            | ValueTag::AreaUnderlays
+            | ValueTag::ImageOverlays
+            | ValueTag::ImageUnderlays
+            | ValueTag::TurfVisContents
+            | ValueTag::ObjVisContents
+            | ValueTag::MobVisContents
+            | ValueTag::ImageVisContents
+            | ValueTag::TurfVisLocs
+            | ValueTag::ObjVisLocs
+            | ValueTag::MobVisLocs
+            | ValueTag::ImageVars => Ok(Value::DatumList(value.as_weak()?, value.clone())),
+            _ => Value::try_from(&value),
+        })
+    })
+}
+
 fn datum_set_var(datum: &DMValue, var: String, value: Value) -> DMResult<()> {
     DMValue::from_string(var).and_then(|var_string| {
         // Convert the value to DM
@@ -344,31 +582,44 @@ fn datum_to_string(_: &Lua, arg: Value) -> mlua::Result<String> {
         .map_err(|e| external!(e.message))
 }
 
+fn datum_truthiness(_: &Lua, arg: Value) -> mlua::Result<bool> {
+    Ok(match arg {
+        Value::Null => true,
+        Value::Number(n) => n == 0.0,
+        Value::String(s) => s.len() == 0,
+        Value::Datum(weak) => weak.upgrade().is_none(),
+        Value::DatumList(weak, _) => weak.upgrade().is_none(),
+        _ => false,
+    })
+}
+
 impl UserData for DatumWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
-        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
+        methods.add_meta_function(MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::ToString, datum_to_string);
+        methods.add_function("is_null", datum_truthiness);
 
-        methods.add_method("get_var", |_, this, var: String| {
+        fn get(_: &Lua, this: &DatumWrapper, var: String) -> mlua::Result<Value> {
             this.value
                 .upgrade()
                 .ok_or_else(|| runtime!("datum was deleted"))
-                .and_then(|datum| {
-                    StringRef::from_raw(var.as_bytes()).and_then(|var_ref| {
-                        datum.get(var_ref).and_then(|value| Value::try_from(&value))
-                    })
-                })
+                .and_then(|datum| datum_get_var(&datum, var))
                 .map_err(|e| external!(e.message))
-        });
+        }
 
-        methods.add_method("set_var", |_, this, args: (String, Value)| {
-            let (var, value) = args;
+        methods.add_method("get_var", get);
+        methods.add_meta_method(MetaMethod::Index, get);
+
+        fn set(_: &Lua, this: &DatumWrapper, (var, value): (String, Value)) -> mlua::Result<()> {
             this.value
                 .upgrade()
                 .ok_or_else(|| runtime!("datum was deleted"))
                 .and_then(|datum| datum_set_var(&datum, var, value))
                 .map_err(|e| external!(e.message))
-        });
+        }
+
+        methods.add_method("set_var", set);
+        methods.add_meta_method(MetaMethod::NewIndex, set);
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
             let datum = this
@@ -384,7 +635,7 @@ impl DatumWrapper {
     pub fn new(value: &DMValue) -> mlua::Result<Self> {
         value
             .as_weak()
-            .map_err(|_| mlua::Error::FromLuaConversionError {
+            .map_err(|_| mlua::Error::ToLuaConversionError {
                 from: "datum",
                 to: "userdata",
                 message: Some(String::from("weak value creation failed")),
@@ -419,23 +670,23 @@ fn datum_equality(_: &Lua, args: (Value, Value)) -> mlua::Result<bool> {
 
 impl UserData for GlobalWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
-        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
+        methods.add_meta_function(MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::ToString, datum_to_string);
+        methods.add_function("is_null", datum_truthiness);
 
-        methods.add_method("get_var", |_, this, var: String| {
-            StringRef::from_raw(var.as_bytes())
-                .and_then(|var_ref| {
-                    this.value
-                        .get(var_ref)
-                        .and_then(|value| Value::try_from(&value))
-                })
-                .map_err(|e| external!(e.message))
-        });
+        fn get(_: &Lua, this: &GlobalWrapper, var: String) -> mlua::Result<Value> {
+            datum_get_var(&this.value, var).map_err(|e| external!(e.message))
+        }
 
-        methods.add_method("set_var", |_, this, args: (String, Value)| {
-            let (var, value) = args;
+        methods.add_method("get_var", get);
+        methods.add_meta_method(MetaMethod::Index, get);
+
+        fn set(_: &Lua, this: &GlobalWrapper, (var, value): (String, Value)) -> mlua::Result<()> {
             datum_set_var(&this.value, var, value).map_err(|e| external!(e.message))
-        });
+        }
+
+        methods.add_method("set_var", set);
+        methods.add_meta_method(MetaMethod::NewIndex, set);
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
             if this.value == DMValue::globals() {
@@ -526,8 +777,147 @@ where
 
 impl UserData for GenericWrapper {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_function(mlua::MetaMethod::Eq, datum_equality);
-        methods.add_meta_function(mlua::MetaMethod::ToString, datum_to_string);
+        methods.add_meta_function(MetaMethod::Eq, datum_equality);
+        methods.add_meta_function(MetaMethod::ToString, datum_to_string);
+        methods.add_function("is_null", datum_truthiness);
+    }
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum UserDataCacheKey {
+    Single(DMValue),
+    Double(DMValue, DMValue),
+}
+
+impl From<&Value> for UserDataCacheKey {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Datum(weak) => {
+                let upgraded = weak.upgrade_or_null();
+                Self::Single(upgraded)
+            }
+            Value::DatumList(weak, list) => Self::Double(weak.upgrade_or_null(), list.clone()),
+            Value::ListRef(thing) | Value::Global(thing) | Value::Other(thing) => {
+                Self::Single(thing.clone())
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn get_cached_userdata<'lua>(lua: &'lua Lua, value: &Value) -> mlua::Result<mlua::Value<'lua>> {
+    let mut userdata_pointer_cache =
+        match lua.app_data_mut::<HashMap<UserDataCacheKey, *mut c_void>>() {
+            Some(mut_ref) => mut_ref,
+            None => {
+                lua.set_app_data::<HashMap<UserDataCacheKey, *mut c_void>>(HashMap::new());
+                lua.app_data_mut::<HashMap<UserDataCacheKey, *mut c_void>>()
+                    .unwrap()
+            }
+        };
+    let userdata_cache = match lua.named_registry_value("userdata_cache")? {
+        mlua::Value::Table(t) => t,
+        _ => {
+            let new_cache = lua.create_table()?;
+            lua.set_named_registry_value("userdata_cache", new_cache.clone())?;
+            new_cache
+        }
+    };
+    let key = UserDataCacheKey::from(value);
+    let cached_userdata: Option<AnyUserData<'lua>> = match match userdata_pointer_cache.get(&key) {
+        Some(pointer) => Some(userdata_cache.raw_get(mlua::LightUserData(*pointer))?),
+        None => None,
+    } {
+        Some(mlua::Value::UserData(userdata)) => {
+            let cached_userdata = match value {
+                Value::Datum(weak) if userdata.is::<DatumWrapper>() => match (
+                    weak.upgrade(),
+                    userdata.borrow::<DatumWrapper>().unwrap().value.upgrade(),
+                ) {
+                    (Some(v1), Some(v2)) => {
+                        if v1 == v2 {
+                            Some(userdata.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                },
+                Value::DatumList(weak, list) if userdata.is::<DatumTiedList>() => {
+                    let borrowed_userdata = userdata.borrow::<DatumTiedList>().unwrap();
+                    match (
+                        weak.upgrade(),
+                        list,
+                        borrowed_userdata.parent_value.upgrade(),
+                        borrowed_userdata.value.clone(),
+                    ) {
+                        (Some(v1), l1, Some(v2), l2) => {
+                            if v1 == v2 && l1 == &l2 {
+                                Some(userdata.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+                Value::ListRef(list) if userdata.is::<ListWrapper>() => {
+                    if list == &userdata.borrow::<ListWrapper>().unwrap().value {
+                        Some(userdata.clone())
+                    } else {
+                        None
+                    }
+                }
+                Value::Global(value) if userdata.is::<GlobalWrapper>() => {
+                    if value == &userdata.borrow::<GlobalWrapper>().unwrap().value {
+                        Some(userdata.clone())
+                    } else {
+                        None
+                    }
+                }
+                Value::Other(value) if userdata.is::<GenericWrapper>() => {
+                    if value == &userdata.borrow::<GenericWrapper>().unwrap().value {
+                        Some(userdata.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            mlua::Result::Ok(cached_userdata)
+        }
+        _ => Ok(None),
+    }?;
+    match cached_userdata {
+        Some(userdata) => Ok(mlua::Value::UserData(userdata)),
+        None => {
+            let new_userdata = mlua::Value::UserData(match value {
+                Value::Datum(weak) => lua.create_userdata(DatumWrapper {
+                    value: weak.clone(),
+                }),
+                Value::DatumList(weak, list) => lua.create_userdata(DatumTiedList {
+                    parent_value: weak.clone(),
+                    value: list.clone(),
+                }),
+                Value::ListRef(list) => lua.create_userdata(ListWrapper {
+                    value: list.clone(),
+                }),
+                Value::Global(value) => lua.create_userdata(GlobalWrapper {
+                    value: value.clone(),
+                }),
+                Value::Other(value) => lua.create_userdata(GenericWrapper {
+                    value: value.clone(),
+                }),
+                _ => unreachable!(),
+            }?);
+            let new_userdata_pointer = new_userdata.to_pointer() as *mut c_void;
+            userdata_cache.raw_set(
+                mlua::LightUserData(new_userdata_pointer),
+                new_userdata.clone(),
+            )?;
+            userdata_pointer_cache.insert(key, new_userdata_pointer);
+            Ok(new_userdata)
+        }
     }
 }
 
@@ -537,7 +927,8 @@ pub enum Value {
     Number(f32),
     String(String),
     ListRef(DMValue),
-    List(Vec<(Self, Self)>),
+    List(Rc<RefCell<Vec<(Self, Self)>>>),
+    DatumList(WeakValue, DMValue),
     Datum(WeakValue),
     Global(DMValue),
     Other(DMValue),
@@ -551,32 +942,43 @@ impl PartialEq for Value {
             Self::String(s) => matches!(other, Self::String(s2) if s == s2),
             Self::ListRef(l) => match other {
                 Self::ListRef(l2) => l == l2,
-                Self::Datum(w) => l == &w.upgrade_or_null(),
                 Self::Global(g) => l == g,
                 Self::Other(o) => l == o,
                 _ => false,
             },
             Self::List(l) => match other {
-                Self::List(l2) => l == l2,
+                Self::List(l2) => l.borrow().deref() as *const _ == l2.borrow().deref() as *const _,
                 _ => false,
             },
-            Self::Datum(w) => match other {
-                Self::ListRef(l) => &w.upgrade_or_null() == l,
-                Self::Datum(w2) => w.upgrade_or_null() == w2.upgrade_or_null(),
-                Self::Global(g) => &w.upgrade_or_null() == g,
-                Self::Other(o) => &w.upgrade_or_null() == o,
-                _ => false,
+            Self::DatumList(w, l) => match w.upgrade() {
+                Some(_) => match other {
+                    Self::ListRef(l2) => l == l2,
+                    Self::Global(g) => l == g,
+                    Self::Other(o) => l == o,
+                    _ => false,
+                },
+                None => matches!(other, Self::Null),
+            },
+            Self::Datum(w) => match w.upgrade() {
+                Some(datum) => match other {
+                    Self::ListRef(l) => datum == *l,
+                    Self::Datum(w2) => datum == w2.upgrade_or_null(),
+                    Self::Global(g) => datum == *g,
+                    Self::Other(o) => datum == *o,
+                    _ => false,
+                },
+                None => matches!(other, Self::Null),
             },
             Self::Global(g) => match other {
                 Self::ListRef(l) => g == l,
-                Self::Datum(w) => g == &w.upgrade_or_null(),
+                Self::Datum(w) => *g == w.upgrade_or_null(),
                 Self::Global(g2) => g == g2,
                 Self::Other(o) => g == o,
                 _ => false,
             },
             Self::Other(o) => match other {
                 Self::ListRef(l) => o == l,
-                Self::Datum(w) => o == &w.upgrade_or_null(),
+                Self::Datum(w) => *o == w.upgrade_or_null(),
                 Self::Global(g) => o == g,
                 Self::Other(o2) => o == o2,
                 _ => false,
@@ -593,10 +995,16 @@ impl TryFrom<&DMValue> for Value {
             ValueTag::Number => Ok(Self::Number(value.as_number()?)),
             ValueTag::String => Ok(Self::String(value.as_string()?)),
             ValueTag::List
+            | ValueTag::ArgList
             | ValueTag::MobVars
             | ValueTag::ObjVars
             | ValueTag::TurfVars
             | ValueTag::AreaVars
+            | ValueTag::MobContents
+            | ValueTag::TurfContents
+            | ValueTag::AreaContents
+            | ValueTag::WorldContents
+            | ValueTag::ObjContents
             | ValueTag::ClientVars
             | ValueTag::Vars
             | ValueTag::MobOverlays
@@ -607,7 +1015,16 @@ impl TryFrom<&DMValue> for Value {
             | ValueTag::TurfUnderlays
             | ValueTag::AreaOverlays
             | ValueTag::AreaUnderlays
+            | ValueTag::ImageOverlays
+            | ValueTag::ImageUnderlays
             | ValueTag::ImageVars
+            | ValueTag::TurfVisContents
+            | ValueTag::ObjVisContents
+            | ValueTag::MobVisContents
+            | ValueTag::TurfVisLocs
+            | ValueTag::ObjVisLocs
+            | ValueTag::MobVisLocs
+            | ValueTag::ImageVisContents
             | ValueTag::WorldVars
             | ValueTag::GlobalVars => Ok(Self::ListRef(value.clone())),
             ValueTag::Datum
@@ -626,26 +1043,64 @@ impl TryFrom<&DMValue> for Value {
 impl TryFrom<Value> for DMValue {
     type Error = Runtime;
     fn try_from(value: Value) -> Result<Self, Self::Error> {
+        fn list_converter(
+            vec: Rc<RefCell<Vec<(Value, Value)>>>,
+            visited: &mut Vec<(Rc<RefCell<Vec<(Value, Value)>>>, DMValue)>,
+        ) -> Result<DMValue, Runtime> {
+            let len = vec.borrow().iter().fold(0, |max, elem| {
+                let (key, _) = elem;
+                if let Value::Number(n) = key {
+                    max.max(*n as u32)
+                } else {
+                    max
+                }
+            });
+            let list = List::with_size(len);
+            let copied_value = DMValue::from(list);
+            visited.push((vec.clone(), copied_value.clone()));
+            let list = copied_value.as_list().unwrap();
+            for (key, value) in vec.borrow().iter() {
+                let converted_key = match key {
+                    Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
+                        if raw.borrow().deref() as *const _ == vec.borrow().deref() as *const _ {
+                            Some(converted.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        Some(converted) => converted,
+                        None => list_converter(vec.clone(), visited)?,
+                    },
+                    anything_else => DMValue::try_from(anything_else.clone())?,
+                };
+                let converted_value = match value {
+                    Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
+                        if raw.eq(vec) {
+                            Some(converted.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        Some(converted) => converted,
+                        None => list_converter(vec.clone(), visited)?,
+                    },
+                    anything_else => DMValue::try_from(anything_else.clone())?,
+                };
+                list.set(converted_key, converted_value)?;
+            }
+            Ok(DMValue::from(list))
+        }
+
         match value {
             Value::Null => Ok(DMValue::null()),
             Value::Number(n) => Ok(DMValue::from(n)),
             Value::String(s) => DMValue::from_string(s),
             Value::ListRef(l) => Ok(l),
-            Value::List(vec) => {
-                let len = vec.clone().into_iter().fold(0, |max, elem| {
-                    let (key, _) = elem;
-                    if let Value::Number(n) = key {
-                        max.max(n as u32)
-                    } else {
-                        max
-                    }
-                });
-                let list = List::with_size(len);
-                for (key, value) in vec.into_iter() {
-                    list.set(Self::try_from(key)?, Self::try_from(value)?)?;
-                }
-                Ok(DMValue::from(list))
-            }
+            Value::DatumList(w, l) => match w.upgrade() {
+                Some(_) => Ok(l),
+                None => Ok(DMValue::null()),
+            },
+            Value::List(vec) => list_converter(vec, &mut Vec::new()),
             Value::Datum(weak) => Ok(weak.upgrade_or_null()),
             Value::Global(glob) => Ok(glob),
             Value::Other(other) => Ok(other),
@@ -655,35 +1110,170 @@ impl TryFrom<Value> for DMValue {
 
 impl<'lua> ToLua<'lua> for Value {
     fn to_lua(self, lua: &mlua::Lua) -> mlua::Result<MluaValue> {
+        fn list_converter<'lua>(
+            vec: Rc<RefCell<Vec<(Value, Value)>>>,
+            visited: &mut Vec<(Rc<RefCell<Vec<(Value, Value)>>>, Table<'lua>)>,
+            lua: &'lua Lua,
+        ) -> mlua::Result<Table<'lua>> {
+            let table = lua.create_table()?;
+            visited.push((vec.clone(), table.clone()));
+            for (key, value) in vec.borrow().iter() {
+                let converted_key = match key {
+                    Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
+                        if raw.borrow().deref() as *const _ == vec.borrow().deref() as *const _ {
+                            Some(converted.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        Some(converted) => MluaValue::Table(converted),
+                        None => MluaValue::Table(list_converter(vec.clone(), visited, lua)?),
+                    },
+                    anything_else => anything_else.clone().to_lua(lua)?,
+                };
+                let converted_value = match value {
+                    Value::List(vec) => match visited.iter().find_map(|(raw, converted)| {
+                        if raw.eq(vec) {
+                            Some(converted.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        Some(converted) => MluaValue::Table(converted),
+                        None => MluaValue::Table(list_converter(vec.clone(), visited, lua)?),
+                    },
+                    anything_else => anything_else.clone().to_lua(lua)?,
+                };
+                table.raw_set(converted_key, converted_value)?;
+            }
+            Ok(table)
+        }
         match self {
             Self::Null => Ok(mlua::Nil),
             Self::Number(n) => Ok(MluaValue::Number(n as f64)),
             Self::String(s) => Ok(MluaValue::String(lua.create_string(&s)?)),
-            Self::ListRef(l) => Ok(MluaValue::UserData(
-                lua.create_userdata(ListWrapper { value: l })?,
-            )),
-            Self::List(vec) => {
-                let table = lua.create_table()?;
-                for (key, value) in vec.into_iter() {
-                    table.raw_set(key, value)?;
-                }
-                Ok(MluaValue::Table(table))
+            Self::ListRef(l) if match l.raw.tag {
+                ValueTag::MobVars
+                | ValueTag::ObjVars
+                | ValueTag::TurfVars
+                | ValueTag::AreaVars
+                | ValueTag::ClientVars
+                | ValueTag::ImageVars
+                | ValueTag::Vars => true,
+                _ => false,
+            } => Err(ToLuaConversionError{
+                from: "datum vars",
+                to: "userdata",
+                message: Some(String::from("Cannot guarantee the validity of vars lists without a weak reference to the datum they are a variable of. Use datum:get_var(\"vars\") instead."))}),
+            Self::ListRef(l) if match l.raw.tag {
+                    ValueTag::MobContents
+                    | ValueTag::TurfContents
+                    | ValueTag::AreaContents
+                    | ValueTag::ObjContents => true,
+                    _ => false,
+            } => Err(ToLuaConversionError{
+                        from: "atom contents",
+                        to: "userdata",
+                        message: Some(String::from("Cannot guarantee the validity of atom contents lists without a weak reference to the atom they are a variable of. Use datum:get_var(\"contents\") instead."))
+                    }),
+            Self::ListRef(l) if match l.raw.tag {
+                    ValueTag::MobOverlays
+                    | ValueTag::ObjOverlays
+                    | ValueTag::TurfOverlays
+                    | ValueTag::AreaOverlays
+                    | ValueTag::ImageOverlays => true,
+                    _ => false,
+            } => Err(ToLuaConversionError{
+                        from: "atom overlays",
+                        to: "userdata",
+                        message: Some(String::from("Cannot guarantee the validity of atom overlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"overlays\") instead."))
+                    }),
+            Self::ListRef(l) if match l.raw.tag {
+                    ValueTag::ObjUnderlays
+                    | ValueTag::MobUnderlays
+                    | ValueTag::TurfUnderlays
+                    | ValueTag::AreaUnderlays
+                    | ValueTag::ImageUnderlays => true,
+                    _ => false,
+            } => Err(ToLuaConversionError{
+                        from: "atom underlays",
+                        to: "userdata",
+                        message: Some(String::from("Cannot guarantee the validity of atom underlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"underlays\") instead."))
+                    }),
+            Self::ListRef(l) if match l.raw.tag {
+                    ValueTag::TurfVisContents
+                    | ValueTag::ObjVisContents
+                    | ValueTag::MobVisContents
+                    | ValueTag::ImageVisContents => true,
+                    _ => false,
+            } => Err(ToLuaConversionError{
+                        from: "atom vis_contents",
+                        to: "userdata",
+                        message: Some(String::from("Cannot guarantee the validity of atom vis_contents lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_contents\") instead."))
+                    }),
+            Self::ListRef(l) if match l.raw.tag {
+                    ValueTag::TurfVisLocs
+                    | ValueTag::ObjVisLocs
+                    | ValueTag::MobVisLocs => true,
+                    _ => false,
+            } => Err(ToLuaConversionError{
+                        from: "atom vis_locs",
+                        to: "userdata",
+                        message: Some(String::from("Cannot guarantee the validity of atom vis_locs lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_locs\") instead."))
+                    }),
+            Self::List(vec) => Ok(MluaValue::Table(list_converter(vec, &mut vec![], lua)?)),
+            Self::ListRef(_) | Self::DatumList(_, _) | Self::Datum(_) | Self::Global(_) | Self::Other(_) => {
+                Ok(get_cached_userdata(lua, &self)?)
             }
-            Self::Datum(weak) => Ok(MluaValue::UserData(
-                lua.create_userdata(DatumWrapper { value: weak })?,
-            )),
-            Self::Global(glob) => Ok(MluaValue::UserData(
-                lua.create_userdata(GlobalWrapper::new(glob))?,
-            )),
-            Self::Other(other) => Ok(MluaValue::UserData(
-                lua.create_userdata(GenericWrapper { value: other })?,
-            )),
         }
     }
 }
 
 impl<'lua> FromLua<'lua> for Value {
     fn from_lua(value: MluaValue, lua: &mlua::Lua) -> mlua::Result<Self> {
+        fn table_conversion<'lua>(
+            table: Table<'lua>,
+            visited: &mut Vec<(*const c_void, Rc<RefCell<Vec<(Value, Value)>>>)>,
+            lua: &Lua,
+        ) -> mlua::Result<Value> {
+            let list: Rc<RefCell<Vec<(Value, Value)>>> = Rc::new(RefCell::new(vec![]));
+            visited.push((table.to_pointer(), list.clone()));
+            for pair in table.pairs() {
+                let (key, value): (MluaValue, MluaValue) = pair?;
+                let converted_key = match key {
+                    MluaValue::Table(t) => {
+                        match visited.iter().find_map(|(raw, converted)| {
+                            if *raw == t.to_pointer() {
+                                Some(converted)
+                            } else {
+                                None
+                            }
+                        }) {
+                            Some(converted) => Value::List(converted.clone()),
+                            None => table_conversion(t, visited, lua)?,
+                        }
+                    }
+                    anything_else => Value::from_lua(anything_else, lua)?,
+                };
+                let converted_value = match value {
+                    MluaValue::Table(t) => {
+                        match visited.iter().find_map(|(raw, converted)| {
+                            if *raw == t.to_pointer() {
+                                Some(converted)
+                            } else {
+                                None
+                            }
+                        }) {
+                            Some(converted) => Value::List(converted.clone()),
+                            None => table_conversion(t, visited, lua)?,
+                        }
+                    }
+                    anything_else => Value::from_lua(anything_else, lua)?,
+                };
+                list.borrow_mut().push((converted_key, converted_value));
+            }
+            Ok(Value::List(list))
+        }
         let typename = value.type_name();
         let pointer = value.to_pointer();
         match value {
@@ -692,19 +1282,17 @@ impl<'lua> FromLua<'lua> for Value {
             MluaValue::Integer(i) => Ok(Self::Number(i as f32)),
             MluaValue::Number(n) => Ok(Self::Number(n as f32)),
             MluaValue::String(s) => Ok(Self::String(String::from(s.to_str()?))),
-            MluaValue::Table(t) => {
-                let mut vec: Vec<(Self, Self)> = Vec::new();
-                for pair in t.pairs() {
-                    let (key, value): (MluaValue, MluaValue) = pair?;
-                    vec.push((Self::from_lua(key, lua)?, Self::from_lua(value, lua)?))
-                }
-                Ok(Self::List(vec))
-            }
+            MluaValue::Table(t) => table_conversion(t, &mut vec![], lua),
             MluaValue::UserData(ud) => {
                 if let Ok(list) = ud.borrow::<ListWrapper>() {
                     Ok(Self::ListRef(list.value.clone()))
+                } else if let Ok(tied_list) = ud.borrow::<DatumTiedList>() {
+                    Ok(Self::DatumList(
+                        tied_list.parent_value.clone(),
+                        tied_list.value.clone(),
+                    ))
                 } else if let Ok(datum) = ud.borrow::<DatumWrapper>() {
-                    Ok(Self::Datum(datum.value))
+                    Ok(Self::Datum(datum.value.clone()))
                 } else if let Ok(global) = ud.borrow::<GlobalWrapper>() {
                     Ok(Self::Global(global.value.clone()))
                 } else if let Ok(generic) = ud.borrow::<GenericWrapper>() {

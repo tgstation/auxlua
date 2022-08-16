@@ -30,7 +30,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "auxlua"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "auxtools",
  "mlua",
@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#cd481e4aefad069d36ba28f9e17912ea0ecaa603"
+source = "git+https://github.com/willox/auxtools#dbf050701cf8fdd074574b546f13686c57bf2d27"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -58,7 +58,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#cd481e4aefad069d36ba28f9e17912ea0ecaa603"
+source = "git+https://github.com/willox/auxtools#dbf050701cf8fdd074574b546f13686c57bf2d27"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -270,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "luau0-src"
-version = "0.3.3+luau531"
+version = "0.3.6+luau536"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0c8678ba90c16ddb1cb4fcdf4ceba50672c53aa6288d2557c3fe9a5084cd148"
+checksum = "edf71436a6bfb6bffd3ebc28ffb6ff5257057449008fbe60a660a3935d92e5b9"
 dependencies = [
  "cc",
 ]
@@ -294,9 +294,9 @@ checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
 
 [[package]]
 name = "mlua"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75eb178f8a9d6654ef31f094fb3da6d1e81e714f27007e92a3094ddd6587aa2"
+checksum = "8afb4815a6d6a3bd1c23e6c647f7df18c9800c12e80526a98e18d7decd7cedcd"
 dependencies = [
  "bstr",
  "cc",

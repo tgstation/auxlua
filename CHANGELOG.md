@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.1.0]
+
+### Added
+
+- Adds support for directly accessing and modifying the following types of lists:
+
+  - args
+  - vis_contents
+  - vis_locs
+  - world.contents
+  - image overlays
+  - image underlays
+
+- Adds an `is_null` method for all DM userdata types, which returns the truthiness of the DM value passed into it.
+
+- Datum vars and list keys can now be get and set using the `__index` and `__newindex` metamethods. `datum:get_var`, `datum:set_var`, `list:get`, and `list:set` are kept as legacy functions, but the existing methods for datums and lists will shadow datum vars and assoc list keys with the same name. You are still able to get and set otherwise shadowed variables using the mentions mentioned prior.
+- The length of DM lists can now be obtained using the `__len` metamethod. `list.len` is kept as a legacy field, but will shadow the `len` key of assoc lists that have one.
+
+### Fixed
+
+- Converting a recursive table to/from lua no longer causes a stack overflow.
+
+### Changed
+
+- You can no longer directly pass the following types of lists to lua functions from DM, as they are attached to datums, and as such, are not guaranteed to remain valid for the entire time they are referenced in lua (this restriction does not apply to `global.vars`, `world.vars`, or `world.contents`, as they will always be valid):
+
+  - vars
+  - overlays
+  - underlays
+  - vis_contents
+  - vis_locs
+  - contents
+
+- The sleep queue, yield table, and task info table are now registry values, as there is no need for users to access them from lua code. If you need the first empty index in the yield table, you can access it with the global field `__next_yield_index`.
+- `dm.usr` and `dm.state_id` are now registry values, but are still accessible through the `dm` table using its `__index` metamethod.
+- `sleep` is now a native function.
+- Internally, DM userdata is now cached in a manner that results in userdata instances corresponding to the same underlying DM value being strictly equal. This is important because table indexing only tests by strict equality. As a result of this change, you can now properly index tables with datums and list references.
+
+### Removed
+
+- Removed the `__set_sleep_flag()` function, as it was only intended for use in `sleep`, which now no longer has any need for it.
+
 ## [1.0.0]
 
 ### Added

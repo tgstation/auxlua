@@ -551,7 +551,7 @@ fn datum_get_var(datum: &DMValue, var: String) -> DMResult<Value> {
             | ValueTag::TurfVisLocs
             | ValueTag::ObjVisLocs
             | ValueTag::MobVisLocs
-            | ValueTag::ImageVars => Ok(Value::DatumList(value.as_weak()?, value)),
+            | ValueTag::ImageVars => Ok(Value::DatumList(datum.as_weak()?, value)),
             _ => Value::try_from(&value),
         })
     })

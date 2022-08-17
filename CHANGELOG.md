@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1]
+
+### Fixed
+
+- Fixed getting datum-tied lists not working. (I can't believe I overlooked this)
+
 ## [1.1.0]
 
 ### Added

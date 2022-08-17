@@ -1,6 +1,6 @@
 [package]
 name = "auxlua"
-version = "1.1.0"
+version = "1.1.1"
 authors = ["Y0SH1M4S73R <legoboyo@earthlink.net>"]
 edition = "2021"
 

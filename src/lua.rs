@@ -108,6 +108,32 @@ impl TryIntoValue for ListWrapper {
 }
 
 #[derive(Clone)]
+pub struct ListIndexer {
+    pub value: DMValue,
+}
+
+impl From<ListIndexer> for DMValue {
+    fn from(wrapper: ListIndexer) -> Self {
+        wrapper.value
+    }
+}
+
+impl<T> PartialEq<T> for ListIndexer
+where
+    T: Clone + Into<DMValue>,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.value == other.clone().into()
+    }
+}
+
+impl TryIntoValue for ListIndexer {
+    fn try_into_value(&self) -> mlua::Result<DMValue> {
+        Ok(self.value.clone())
+    }
+}
+
+#[derive(Clone)]
 pub struct DatumTiedList {
     pub parent_value: WeakValue,
     pub value: DMValue,
@@ -134,6 +160,42 @@ where
 }
 
 impl TryIntoValue for DatumTiedList {
+    fn try_into_value(&self) -> mlua::Result<DMValue> {
+        if self.parent_value.upgrade().is_some() {
+            Ok(self.value.clone())
+        } else {
+            Err(external!("list tied to deleted datum"))
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DatumTiedListIndexer {
+    pub parent_value: WeakValue,
+    pub value: DMValue,
+}
+
+impl From<DatumTiedListIndexer> for DMValue {
+    fn from(list: DatumTiedListIndexer) -> Self {
+        if list.parent_value.upgrade().is_some() {
+            list.value
+        } else {
+            DMValue::null()
+        }
+    }
+}
+
+impl<T> PartialEq<T> for DatumTiedListIndexer
+where
+    T: Clone + Into<DMValue>,
+{
+    #[allow(clippy::cmp_owned)]
+    fn eq(&self, other: &T) -> bool {
+        DMValue::from(self.clone()) == other.clone().into()
+    }
+}
+
+impl TryIntoValue for DatumTiedListIndexer {
     fn try_into_value(&self) -> mlua::Result<DMValue> {
         if self.parent_value.upgrade().is_some() {
             Ok(self.value.clone())
@@ -385,6 +447,10 @@ where
 impl UserData for ListWrapper {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("len", list_len);
+
+        fields.add_field_method_get("entries", |_, this: &ListWrapper| {
+            Ok(Value::ListIndexer(this.value.clone()))
+        });
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
@@ -394,10 +460,8 @@ impl UserData for ListWrapper {
         methods.add_meta_method(MetaMethod::Len, |lua, this, ()| list_len(lua, this));
 
         methods.add_method("get", list_get);
-        methods.add_meta_method(MetaMethod::Index, list_get);
 
         methods.add_method("set", list_set);
-        methods.add_meta_method(MetaMethod::NewIndex, list_set);
 
         methods.add_method("add", list_add);
 
@@ -411,9 +475,24 @@ impl UserData for ListWrapper {
     }
 }
 
+impl UserData for ListIndexer {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::Index, list_get);
+
+        methods.add_meta_method(MetaMethod::NewIndex, list_set);
+    }
+}
+
 impl UserData for DatumTiedList {
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("len", list_len);
+
+        fields.add_field_method_get("entries", |_, this: &DatumTiedList| {
+            Ok(Value::DatumListIndexer(
+                this.parent_value,
+                this.value.clone(),
+            ))
+        });
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
@@ -423,10 +502,8 @@ impl UserData for DatumTiedList {
         methods.add_meta_method(MetaMethod::Len, |lua, this, ()| list_len(lua, this));
 
         methods.add_method("get", list_get);
-        methods.add_meta_method(MetaMethod::Index, list_get);
 
         methods.add_method("set", list_set);
-        methods.add_meta_method(MetaMethod::NewIndex, list_set);
 
         methods.add_method("add", list_add);
 
@@ -437,6 +514,14 @@ impl UserData for DatumTiedList {
         methods.add_method("of_type", list_of_type);
 
         methods.add_meta_method(MetaMethod::Iter, list_iter);
+    }
+}
+
+impl UserData for DatumTiedListIndexer {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::Index, list_get);
+
+        methods.add_meta_method(MetaMethod::NewIndex, list_set);
     }
 }
 
@@ -470,6 +555,26 @@ impl From<DatumWrapper> for DMValue {
 }
 
 impl<T> PartialEq<T> for DatumWrapper
+where
+    T: Clone + Into<DMValue>,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.value.upgrade_or_null() == other.clone().into()
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct DatumIndexer {
+    pub value: WeakValue,
+}
+
+impl From<DatumIndexer> for DMValue {
+    fn from(wrapper: DatumIndexer) -> Self {
+        wrapper.value.upgrade_or_null()
+    }
+}
+
+impl<T> PartialEq<T> for DatumIndexer
 where
     T: Clone + Into<DMValue>,
 {
@@ -595,32 +700,32 @@ fn datum_truthiness(_: &Lua, arg: Value) -> mlua::Result<bool> {
 }
 
 impl UserData for DatumWrapper {
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("vars", |_, this: &DatumWrapper| {
+            Ok(Value::DatumIndexer(this.value))
+        });
+    }
+
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_function(MetaMethod::Eq, datum_equality);
         methods.add_meta_function(MetaMethod::ToString, datum_to_string);
         methods.add_function("is_null", datum_truthiness);
 
-        fn get(_: &Lua, this: &DatumWrapper, var: String) -> mlua::Result<Value> {
+        methods.add_method("get_var", |_, this, var| {
             this.value
                 .upgrade()
                 .ok_or_else(|| runtime!("datum was deleted"))
                 .and_then(|datum| datum_get_var(&datum, var))
                 .map_err(|e| external!(e.message))
-        }
+        });
 
-        methods.add_method("get_var", get);
-        methods.add_meta_method(MetaMethod::Index, get);
-
-        fn set(_: &Lua, this: &DatumWrapper, (var, value): (String, Value)) -> mlua::Result<()> {
+        methods.add_method("set_var", |_, this, (var, value)| {
             this.value
                 .upgrade()
                 .ok_or_else(|| runtime!("datum was deleted"))
                 .and_then(|datum| datum_set_var(&datum, var, value))
                 .map_err(|e| external!(e.message))
-        }
-
-        methods.add_method("set_var", set);
-        methods.add_meta_method(MetaMethod::NewIndex, set);
+        });
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
             let datum = this
@@ -628,6 +733,26 @@ impl UserData for DatumWrapper {
                 .upgrade()
                 .ok_or_else(|| external!("datum was deleted"))?;
             datum_call_proc(lua, &datum, args)
+        });
+    }
+}
+
+impl UserData for DatumIndexer {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::Index, |_, this, var| {
+            this.value
+                .upgrade()
+                .ok_or_else(|| runtime!("datum was deleted"))
+                .and_then(|datum| datum_get_var(&datum, var))
+                .map_err(|e| external!(e.message))
+        });
+
+        methods.add_meta_method(MetaMethod::NewIndex, |_, this, (var, value)| {
+            this.value
+                .upgrade()
+                .ok_or_else(|| runtime!("datum was deleted"))
+                .and_then(|datum| datum_set_var(&datum, var, value))
+                .map_err(|e| external!(e.message))
         });
     }
 }
@@ -665,35 +790,67 @@ where
     }
 }
 
+#[derive(Clone)]
+pub struct GlobalIndexer {
+    pub value: DMValue,
+}
+
+impl From<GlobalIndexer> for DMValue {
+    fn from(wrapper: GlobalIndexer) -> Self {
+        wrapper.value
+    }
+}
+
+impl<T> PartialEq<T> for GlobalIndexer
+where
+    T: Clone + Into<DMValue>,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.value == other.clone().into()
+    }
+}
+
 fn datum_equality(_: &Lua, args: (Value, Value)) -> mlua::Result<bool> {
     Ok(args.0 == args.1)
 }
 
 impl UserData for GlobalWrapper {
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("vars", |_, this: &GlobalWrapper| {
+            Ok(Value::GlobalIndexer(this.value.clone()))
+        });
+    }
+
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_function(MetaMethod::Eq, datum_equality);
         methods.add_meta_function(MetaMethod::ToString, datum_to_string);
         methods.add_function("is_null", datum_truthiness);
 
-        fn get(_: &Lua, this: &GlobalWrapper, var: String) -> mlua::Result<Value> {
+        methods.add_method("get_var", |_, this, var| {
             datum_get_var(&this.value, var).map_err(|e| external!(e.message))
-        }
+        });
 
-        methods.add_method("get_var", get);
-        methods.add_meta_method(MetaMethod::Index, get);
-
-        fn set(_: &Lua, this: &GlobalWrapper, (var, value): (String, Value)) -> mlua::Result<()> {
+        methods.add_method("set_var", |_, this, (var, value)| {
             datum_set_var(&this.value, var, value).map_err(|e| external!(e.message))
-        }
-
-        methods.add_method("set_var", set);
-        methods.add_meta_method(MetaMethod::NewIndex, set);
+        });
 
         methods.add_method("call_proc", |lua, this, args: MultiValue| {
             if this.value == DMValue::globals() {
                 return Err(external!("Cannot call a proc on the global object"));
             }
             datum_call_proc(lua, &this.value, args)
+        });
+    }
+}
+
+impl UserData for GlobalIndexer {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_method(MetaMethod::Index, |_, this, var| {
+            datum_get_var(&this.value, var).map_err(|e| external!(e.message))
+        });
+
+        methods.add_meta_method(MetaMethod::NewIndex, |_, this, (var, value)| {
+            datum_set_var(&this.value, var, value).map_err(|e| external!(e.message))
         });
     }
 }
@@ -788,6 +945,7 @@ impl UserData for GenericWrapper {
 enum UserDataCacheKey {
     Single(DMValue),
     Double(DMValue, DMValue),
+    Triple(DMValue, DMValue, DMValue),
 }
 
 impl From<&Value> for UserDataCacheKey {
@@ -797,9 +955,19 @@ impl From<&Value> for UserDataCacheKey {
                 let upgraded = weak.upgrade_or_null();
                 Self::Single(upgraded)
             }
+            Value::DatumIndexer(weak) => {
+                let upgraded = weak.upgrade_or_null();
+                Self::Double(upgraded, DMValue::null())
+            }
             Value::DatumList(weak, list) => Self::Double(weak.upgrade_or_null(), list.clone()),
+            Value::DatumListIndexer(weak, list) => {
+                Self::Triple(weak.upgrade_or_null(), list.clone(), DMValue::null())
+            }
             Value::ListRef(thing) | Value::Global(thing) | Value::Other(thing) => {
                 Self::Single(thing.clone())
+            }
+            Value::ListIndexer(thing) | Value::GlobalIndexer(thing) => {
+                Self::Double(thing.clone(), DMValue::null())
             }
             _ => unreachable!(),
         }
@@ -844,8 +1012,39 @@ fn get_cached_userdata<'lua>(lua: &'lua Lua, value: &Value) -> mlua::Result<mlua
                     }
                     _ => None,
                 },
+                Value::DatumIndexer(weak) if userdata.is::<DatumIndexer>() => match (
+                    weak.upgrade(),
+                    userdata.borrow::<DatumIndexer>().unwrap().value.upgrade(),
+                ) {
+                    (Some(v1), Some(v2)) => {
+                        if v1 == v2 {
+                            Some(userdata.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                },
                 Value::DatumList(weak, list) if userdata.is::<DatumTiedList>() => {
                     let borrowed_userdata = userdata.borrow::<DatumTiedList>().unwrap();
+                    match (
+                        weak.upgrade(),
+                        list,
+                        borrowed_userdata.parent_value.upgrade(),
+                        borrowed_userdata.value.clone(),
+                    ) {
+                        (Some(v1), l1, Some(v2), l2) => {
+                            if v1 == v2 && l1 == &l2 {
+                                Some(userdata.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+                Value::DatumListIndexer(weak, list) if userdata.is::<DatumTiedListIndexer>() => {
+                    let borrowed_userdata = userdata.borrow::<DatumTiedListIndexer>().unwrap();
                     match (
                         weak.upgrade(),
                         list,
@@ -869,8 +1068,22 @@ fn get_cached_userdata<'lua>(lua: &'lua Lua, value: &Value) -> mlua::Result<mlua
                         None
                     }
                 }
+                Value::ListIndexer(list) if userdata.is::<ListIndexer>() => {
+                    if list == &userdata.borrow::<ListIndexer>().unwrap().value {
+                        Some(userdata.clone())
+                    } else {
+                        None
+                    }
+                }
                 Value::Global(value) if userdata.is::<GlobalWrapper>() => {
                     if value == &userdata.borrow::<GlobalWrapper>().unwrap().value {
+                        Some(userdata.clone())
+                    } else {
+                        None
+                    }
+                }
+                Value::GlobalIndexer(value) if userdata.is::<GlobalIndexer>() => {
+                    if value == &userdata.borrow::<GlobalIndexer>().unwrap().value {
                         Some(userdata.clone())
                     } else {
                         None
@@ -894,14 +1107,25 @@ fn get_cached_userdata<'lua>(lua: &'lua Lua, value: &Value) -> mlua::Result<mlua
         None => {
             let new_userdata = mlua::Value::UserData(match value {
                 Value::Datum(weak) => lua.create_userdata(DatumWrapper { value: *weak }),
+                Value::DatumIndexer(weak) => lua.create_userdata(DatumIndexer { value: *weak }),
                 Value::DatumList(weak, list) => lua.create_userdata(DatumTiedList {
+                    parent_value: *weak,
+                    value: list.clone(),
+                }),
+                Value::DatumListIndexer(weak, list) => lua.create_userdata(DatumTiedListIndexer {
                     parent_value: *weak,
                     value: list.clone(),
                 }),
                 Value::ListRef(list) => lua.create_userdata(ListWrapper {
                     value: list.clone(),
                 }),
+                Value::ListIndexer(list) => lua.create_userdata(ListIndexer {
+                    value: list.clone(),
+                }),
                 Value::Global(value) => lua.create_userdata(GlobalWrapper {
+                    value: value.clone(),
+                }),
+                Value::GlobalIndexer(value) => lua.create_userdata(GlobalIndexer {
                     value: value.clone(),
                 }),
                 Value::Other(value) => lua.create_userdata(GenericWrapper {
@@ -926,10 +1150,14 @@ pub enum Value {
     Number(f32),
     String(String),
     ListRef(DMValue),
+    ListIndexer(DMValue),
     List(Rc<RefCell<Vec<(Self, Self)>>>),
     DatumList(WeakValue, DMValue),
+    DatumListIndexer(WeakValue, DMValue),
     Datum(WeakValue),
+    DatumIndexer(WeakValue),
     Global(DMValue),
+    GlobalIndexer(DMValue),
     Other(DMValue),
 }
 
@@ -982,6 +1210,7 @@ impl PartialEq for Value {
                 Self::Other(o2) => o == o2,
                 _ => false,
             },
+            _ => false,
         }
     }
 }
@@ -1096,14 +1325,14 @@ impl TryFrom<Value> for DMValue {
             Value::Null => Ok(DMValue::null()),
             Value::Number(n) => Ok(DMValue::from(n)),
             Value::String(s) => DMValue::from_string(s),
-            Value::ListRef(l) => Ok(l),
-            Value::DatumList(w, l) => match w.upgrade() {
+            Value::ListRef(l) | Value::ListIndexer(l) => Ok(l),
+            Value::DatumList(w, l) | Value::DatumListIndexer(w, l) => match w.upgrade() {
                 Some(_) => Ok(l),
                 None => Ok(DMValue::null()),
             },
             Value::List(vec) => list_converter(vec, &mut Vec::new()),
-            Value::Datum(weak) => Ok(weak.upgrade_or_null()),
-            Value::Global(glob) => Ok(glob),
+            Value::Datum(weak) | Value::DatumIndexer(weak) => Ok(weak.upgrade_or_null()),
+            Value::Global(glob) | Value::GlobalIndexer(glob) => Ok(glob),
             Value::Other(other) => Ok(other),
         }
     }
@@ -1153,7 +1382,7 @@ impl<'lua> ToLua<'lua> for Value {
             Self::Null => Ok(mlua::Nil),
             Self::Number(n) => Ok(MluaValue::Number(n as f64)),
             Self::String(s) => Ok(MluaValue::String(lua.create_string(&s)?)),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                 ValueTag::MobVars
                 | ValueTag::ObjVars
                 | ValueTag::TurfVars
@@ -1164,7 +1393,7 @@ impl<'lua> ToLua<'lua> for Value {
                 from: "datum vars",
                 to: "userdata",
                 message: Some(String::from("Cannot guarantee the validity of vars lists without a weak reference to the datum they are a variable of. Use datum:get_var(\"vars\") instead."))}),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                     ValueTag::MobContents
                     | ValueTag::TurfContents
                     | ValueTag::AreaContents
@@ -1173,7 +1402,7 @@ impl<'lua> ToLua<'lua> for Value {
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom contents lists without a weak reference to the atom they are a variable of. Use datum:get_var(\"contents\") instead."))
                     }),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                     ValueTag::MobOverlays
                     | ValueTag::ObjOverlays
                     | ValueTag::TurfOverlays
@@ -1183,7 +1412,7 @@ impl<'lua> ToLua<'lua> for Value {
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom overlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"overlays\") instead."))
                     }),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                     ValueTag::ObjUnderlays
                     | ValueTag::MobUnderlays
                     | ValueTag::TurfUnderlays
@@ -1193,7 +1422,7 @@ impl<'lua> ToLua<'lua> for Value {
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom underlays lists without a weak reference to the atom they are attached to. Use datum:get_var(\"underlays\") instead."))
                     }),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                     ValueTag::TurfVisContents
                     | ValueTag::ObjVisContents
                     | ValueTag::MobVisContents
@@ -1202,7 +1431,7 @@ impl<'lua> ToLua<'lua> for Value {
                         to: "userdata",
                         message: Some(String::from("Cannot guarantee the validity of atom vis_contents lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_contents\") instead."))
                     }),
-            Self::ListRef(l) if matches!(l.raw.tag,
+            Self::ListRef(l) | Self::ListIndexer(l) if matches!(l.raw.tag,
                     ValueTag::TurfVisLocs
                     | ValueTag::ObjVisLocs
                     | ValueTag::MobVisLocs) => Err(ToLuaConversionError{
@@ -1211,7 +1440,15 @@ impl<'lua> ToLua<'lua> for Value {
                         message: Some(String::from("Cannot guarantee the validity of atom vis_locs lists without a weak reference to the atom they are attached to. Use datum:get_var(\"vis_locs\") instead."))
                     }),
             Self::List(vec) => Ok(MluaValue::Table(list_converter(vec, &mut vec![], lua)?)),
-            Self::ListRef(_) | Self::DatumList(_, _) | Self::Datum(_) | Self::Global(_) | Self::Other(_) => {
+            Self::ListRef(_)
+            | Self::ListIndexer(_)
+            | Self::DatumList(_, _)
+            | Self::DatumListIndexer(_, _)
+            | Self::Datum(_)
+            | Self::DatumIndexer(_)
+            | Self::Global(_)
+            | Self::GlobalIndexer(_)
+            | Self::Other(_) => {
                 Ok(get_cached_userdata(lua, &self)?)
             }
         }
@@ -1275,15 +1512,26 @@ impl<'lua> FromLua<'lua> for Value {
             MluaValue::UserData(ud) => {
                 if let Ok(list) = ud.borrow::<ListWrapper>() {
                     Ok(Self::ListRef(list.value.clone()))
+                } else if let Ok(indexer) = ud.borrow::<ListIndexer>() {
+                    Ok(Self::ListIndexer(indexer.value.clone()))
                 } else if let Ok(tied_list) = ud.borrow::<DatumTiedList>() {
                     Ok(Self::DatumList(
                         tied_list.parent_value,
                         tied_list.value.clone(),
                     ))
+                } else if let Ok(indexer) = ud.borrow::<DatumTiedListIndexer>() {
+                    Ok(Self::DatumListIndexer(
+                        indexer.parent_value,
+                        indexer.value.clone(),
+                    ))
                 } else if let Ok(datum) = ud.borrow::<DatumWrapper>() {
                     Ok(Self::Datum(datum.value))
+                } else if let Ok(indexer) = ud.borrow::<DatumIndexer>() {
+                    Ok(Self::DatumIndexer(indexer.value))
                 } else if let Ok(global) = ud.borrow::<GlobalWrapper>() {
                     Ok(Self::Global(global.value.clone()))
+                } else if let Ok(indexer) = ud.borrow::<GlobalIndexer>() {
+                    Ok(Self::Global(indexer.value.clone()))
                 } else if let Ok(generic) = ud.borrow::<GenericWrapper>() {
                     Ok(Self::Other(generic.value.clone()))
                 } else {

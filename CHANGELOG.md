@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0]
+
+### Changed
+
+- Citing compatibility concerns, the `__index` and `__newindex` metamethods for datums and lists have been moved behind a `vars` field for datums and an `entries` field for lists.
+
 ## [1.1.1]
 
 ### Fixed

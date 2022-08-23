@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.1]
+
+### Fixed
+
+- Running an empty string (zero bytes long, not just all whitespace) no longer crashes Dream Daemon.
+
 ## [1.2.0]
 
 ### Changed

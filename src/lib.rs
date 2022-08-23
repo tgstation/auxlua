@@ -487,7 +487,11 @@ where
 #[hook("/proc/__lua_load")]
 fn load(state: DMValue, script: DMValue, name: DMValue) {
     let key = state.as_string()?;
-    let script_text = script.as_string()?;
+    let mut script_text = script.as_string()?;
+    // workaround for an mlua bug where compiling a luau chunk consisting of the empty string results in an access violation
+    if script_text.is_empty() {
+        script_text = String::from(" ");
+    }
 
     // Use this name for the logging and debugging of this chunk
     let name = name.as_string().unwrap_or_else(|_| String::from("input"));

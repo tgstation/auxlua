@@ -147,6 +147,16 @@ fn print(lua: &Lua, args: MultiValue) -> mlua::Result<()> {
     })
 }
 
+fn loadstring(state: &Lua, mut code: String) -> mlua::Result<(mlua::Value, mlua::Value)> {
+    if code.is_empty() {
+        code = String::from(" "); //mlua bug workaround
+    }
+    match state.load(&code).into_function() {
+        Ok(f) => Ok((mlua::Value::Function(f), mlua::Nil)),
+        Err(e) => Ok((mlua::Nil, mlua::Value::Error(e))),
+    }
+}
+
 /// Applies auxlua-specific data structures to the lua state
 fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
     let globals = state.globals();
@@ -271,6 +281,14 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .map_err(|e| specific_runtime!("{}", e))?;
     globals
         .raw_set("print", print)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
+    // Set loadstring
+    let loadstring = state
+        .create_function(loadstring)
+        .map_err(|e| specific_runtime!("{}", e))?;
+    globals
+        .raw_set("loadstring", loadstring)
         .map_err(|e| specific_runtime!("{}", e))?;
 
     let global_metatable = state

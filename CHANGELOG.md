@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.0]
+
+### Added
+
+- Adds the `loadstring` function. It compiles a string into lua code - if the code compiles, `loadstring` will return a function that runs that code; otherwise, it returns `nil` and the error that prevented the code from compiling.
+
 ## [1.2.1]
 
 ### Fixed

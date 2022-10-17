@@ -672,7 +672,6 @@ fn call(state: DMValue, function: DMValue, arguments: DMValue) {
         // Produce a human-readable name for the function
         let function_name: String =
             mapped_path
-                .clone()
                 .iter()
                 .try_fold(String::new(), |mut acc, elem| {
                     if !acc.is_empty() {

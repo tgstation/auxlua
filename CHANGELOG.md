@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1]
+
+### Fixed
+
+- Updated auxtools with a patch to fix linux function signature scanning for BYOND 514.1588.
+
 ## [1.3.0]
 
 ### Added

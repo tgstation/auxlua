@@ -30,7 +30,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 
 [[package]]
 name = "auxlua"
-version = "1.3.1"
+version = "1.3.2"
 dependencies = [
  "auxtools",
  "mlua",
@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#dbf050701cf8fdd074574b546f13686c57bf2d27"
+source = "git+https://github.com/willox/auxtools#9b34d37036cdf59cb15019421c4c6cfaac4762b2"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -58,7 +58,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#dbf050701cf8fdd074574b546f13686c57bf2d27"
+source = "git+https://github.com/willox/auxtools#9b34d37036cdf59cb15019421c4c6cfaac4762b2"
 dependencies = [
  "hex",
  "proc-macro2",

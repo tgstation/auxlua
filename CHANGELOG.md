@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2]
+
+### Fixed
+
+- Actually fixes linux function signature scanning for BYOND 514.1588.
+
 ## [1.3.1]
 
 ### Fixed

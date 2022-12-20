@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod lua;
 
@@ -37,7 +37,7 @@ thread_local! {
     pub static STATES: RefCell<HashMap<String, Lua>> = RefCell::new(HashMap::new());
 
     /// A CPU usage limit in milliseconds for each run of lua code
-    pub static EXECUTION_LIMIT: RefCell<u128> = RefCell::new(100);
+    pub static EXECUTION_LIMIT: RefCell<Duration> = RefCell::new(Duration::from_millis(100));
 }
 
 #[init(full)]
@@ -233,6 +233,14 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
         .raw_set("sleep", sleep)
         .map_err(|e| specific_runtime!("{}", e))?;
 
+    let check_exec_time_func: Function = state
+        .create_function(over_exec_usage)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
+    globals
+        .raw_set("over_exec_usage", check_exec_time_func)
+        .map_err(|e| specific_runtime!("{}", e))?;
+
     // Create the task info table, used to store information about
     // the currently running tasks
 
@@ -323,7 +331,7 @@ fn apply_state_vars(state: &Lua, id: String) -> DMResult<()> {
 fn exhaustion_check() -> LuaResult<VmState> {
     LUA_THREAD_START.with(|start| {
         EXECUTION_LIMIT.with(|limit| {
-            if start.borrow().elapsed().as_millis() > *limit.borrow() {
+            if start.borrow().elapsed() > *limit.borrow() {
                 Err(external!(
                     "execution limit reached - call sleep or coroutine.yield before this point"
                 ))
@@ -331,6 +339,17 @@ fn exhaustion_check() -> LuaResult<VmState> {
                 Ok(VmState::Continue)
             }
         })
+    })
+}
+
+fn over_exec_usage(_: &Lua, fraction_opt: Option<f32>) -> LuaResult<bool> {
+    let fraction = match fraction_opt {
+        Some(f) => f.clamp(0.0, 1.0),
+        None => 0.95,
+    };
+    LUA_THREAD_START.with(|start| {
+        EXECUTION_LIMIT
+            .with(|limit| Ok(start.borrow().elapsed() > limit.borrow().mul_f32(fraction)))
     })
 }
 
@@ -378,8 +397,15 @@ fn set_global_proc_call_wrapper(wrapper: DMValue) {
 #[hook("/proc/__lua_set_execution_limit")]
 fn set_execution_limit(limit: DMValue) {
     limit.as_number().and_then(|limit_num| {
+        let limit_num_secs = limit_num * 0.001;
+        if limit_num_secs < 0.0 || !limit_num_secs.is_normal() {
+            return Err(specific_runtime!(
+                "execution limit must be a positive finite value (received {})",
+                limit_num_secs
+            ));
+        }
         EXECUTION_LIMIT.with(|execution_limit| {
-            *execution_limit.borrow_mut() = (limit_num as u128).to_owned();
+            *execution_limit.borrow_mut() = Duration::from_secs_f32(limit_num_secs);
             Ok(DMValue::null())
         })
     })

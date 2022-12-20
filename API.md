@@ -102,6 +102,22 @@ A weak reference to DM's `usr`. This is a registry value that is indirectly obta
 
 ---
 
+## Execution Limit
+
+In order to prevent freezing Dream Daemon with infinite loops, auxlua enforces an execution limit, defaulting to 100ms. When a single lua state has been executing for longer than this limit, it will eventually stop and produce an error.
+
+To avoid exceeding the execution limit, call `sleep()` or `coroutine.yield()` before the execution limit is reached.
+
+### over_exec_usage(fraction)
+
+This function returns whether the current run of the Lua VM has executed for longer than the specified fraction of the execution limit. You can use this function to branch to a call to `sleep()` or `coroutine.yield()` to maximize the amount of work done in a single run of the Lua VM. If nil, `fraction` will default to 0.95, otherwise, it will be clamped to the range \[0, 1\].
+
+### /proc/\_\_lua_set_execution_limit(time)
+
+This DM hook adjusts the execution limit. `time` is a positive number of milliseconds.
+
+---
+
 ## Task management
 
 When a main thread calls `sleep()`, it is added to the end of the [`sleep_queue`](#sleep_queue) table. Each call to `/proc/__lua_awaken` dequeues and runs the thread at the start of `sleep_queue`. Under the hood, `sleep` performs the following:

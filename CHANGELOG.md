@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.3]
+
+### Added
+
+- Adds the `over_exec_usage` function, which returns `true` if the current thread has been running longer than the specified fraction of the execution limit (defaults to 0.95 if not specified).
+
+### Changes
+
+- Refactored the execution limit to allow for setting it to any positive finite number.
+
 ## [1.3.2]
 
 ### Fixed

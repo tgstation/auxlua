@@ -10,7 +10,7 @@ jobs:
   check-needs-rebuild:
     outputs:
       needs-rebuild: ${{ steps.verify-changed-files.outputs.files_changed || contains(github.event.head_commit.message, '[release]') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v1
       - name: Check Modified Files
@@ -54,7 +54,7 @@ jobs:
           name: auxlua.dll
           path: target/i686-pc-windows-msvc/release/auxlua.dll
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     needs: check-needs-rebuild
     if: needs.check-needs-rebuild.outputs.needs-rebuild == 'true'
     env:
@@ -103,7 +103,7 @@ jobs:
           name: auxlua
           path: target/i686-unknown-linux-gnu/release/libauxlua.so
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     needs: ["build-windows", "build-linux"]
     if: contains(github.event.head_commit.message, '[release]')
     steps:

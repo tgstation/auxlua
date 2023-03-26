@@ -1457,8 +1457,8 @@ impl<'lua> ToLua<'lua> for Value {
 
 impl<'lua> FromLua<'lua> for Value {
     fn from_lua(value: MluaValue, lua: &mlua::Lua) -> mlua::Result<Self> {
-        fn table_conversion<'lua>(
-            table: Table<'lua>,
+        fn table_conversion(
+            table: Table<'_>,
             visited: &mut Vec<(*const c_void, Rc<ListConversionCell>)>,
             lua: &Lua,
         ) -> mlua::Result<Value> {

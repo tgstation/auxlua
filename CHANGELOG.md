@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.1]
+
+### Fixes
+
+- Bumps the version dependency of auxtools, adding support for 515.1602 on Windows.
+
 ## [1.4.0]
 
 ### Added

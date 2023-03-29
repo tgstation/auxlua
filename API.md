@@ -22,7 +22,7 @@ Equivalent to DM's `datum.procName(...)`
 
 ### datum:is_null()
 
-This function is used to evaluate the truthiness of a DM var. The lua statement `if datum:is_null() then` is equivalent to the DM statement `if(datum)`.
+This function is used to evaluate the truthiness of a DM var. The lua statement `if datum:is_null() then` is equivalent to the DM statement `if(!datum)`.
 
 ### datum.vars
 

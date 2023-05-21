@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.2]
+
+### Added
+
+- Auxlua comes bundled with [auxcov](https://www.github.com/willox/auxtools/tree/master/auxcov), a library for DM code coverage.
+
+### Fixes
+
+- Bumps the version dependency of auxtools, adding support for up to 515.1606 on all platforms.
+
+### Changes
+
+- Auxlua is now built with LTO (link time optimization)
+
 ## [1.4.1]
 
 ### Fixes

@@ -1,6 +1,6 @@
 [package]
 name = "auxlua"
-version = "1.4.1"
+version = "1.4.2"
 authors = ["Y0SH1M4S73R <legoboyo@earthlink.net>"]
 edition = "2021"
 
@@ -11,4 +11,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = {git = "https://github.com/willox/auxtools"}
+auxcov = {git = "https://github.com/willox/auxtools", optional = true, default-features = false }
 mlua = {version = "0.8.2", features = ["luau"]}
+
+[features]
+coverage = ["auxcov"]
+
+[profile.release]
+lto = true
+codegen-units = 1

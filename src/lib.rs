@@ -17,6 +17,13 @@ mod lua;
 
 auxtools::pin_dll!(false);
 
+#[cfg(feature = "coverage")]
+#[init(full)]
+fn init_auxcov() -> Result<(), String> {
+    auxcov::anti_dce_stub();
+    Ok(())
+}
+
 type LuaModValue = lua::Value;
 type LuaResult<T> = mlua::Result<T>;
 

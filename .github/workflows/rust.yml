@@ -51,7 +51,7 @@ jobs:
           args: --target i686-pc-windows-msvc --release
       - uses: actions/upload-artifact@v1
         with:
-          name: auxlua.dll
+          name: auxlua_default_windows
           path: target/i686-pc-windows-msvc/release/auxlua.dll
       - name: Build (release) (with auxcov)
         uses: actions-rs/cargo@v1
@@ -61,7 +61,7 @@ jobs:
           args: --target i686-pc-windows-msvc --release --features coverage
       - uses: actions/upload-artifact@v1
         with:
-          name: auxlua-coverage.dll
+          name: auxlua_coverage_windows
           path: target/i686-pc-windows-msvc/release/auxlua.dll
   build-linux:
     runs-on: ubuntu-20.04
@@ -110,7 +110,7 @@ jobs:
           args: --target i686-unknown-linux-gnu --release
       - uses: actions/upload-artifact@v1
         with:
-          name: auxlua
+          name: auxlua_default_linux
           path: target/i686-unknown-linux-gnu/release/libauxlua.so
       - name: Build (release) (with coverage)
         uses: actions-rs/cargo@v1
@@ -120,8 +120,8 @@ jobs:
           args: --target i686-unknown-linux-gnu --release --features coverage
       - uses: actions/upload-artifact@v1
         with:
-          name: auxlua
-          path: target/i686-unknown-linux-gnu/release/libauxlua-coverage.so
+          name: auxlua_coverage_linux
+          path: target/i686-unknown-linux-gnu/release/libauxlua.so
   release:
     runs-on: ubuntu-20.04
     needs: ["build-windows", "build-linux"]
@@ -158,7 +158,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua/libauxlua.so
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua_default_linux/libauxlua.so
           asset_name: libauxlua.so
           asset_content_type: application/octet-stream
       - name: Upload Linux build (with coverage)
@@ -167,7 +167,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua/libauxlua-coverage.so
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua_coverage_linux/libauxlua.so
           asset_name: libauxlua-coverage.so
           asset_content_type: application/octet-stream
       - name: Upload Windows build
@@ -176,7 +176,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll/auxlua.dll
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua_default_windows/auxlua.dll
           asset_name: auxlua.dll
           asset_content_type: application/octet-stream
       - name: Upload Windows build (with coverage)
@@ -185,6 +185,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll/auxlua-coverage.dll
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua_coverage_windows/auxlua.dll
           asset_name: auxlua-coverage.dll
           asset_content_type: application/octet-stream

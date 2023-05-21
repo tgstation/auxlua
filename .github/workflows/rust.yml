@@ -53,6 +53,16 @@ jobs:
         with:
           name: auxlua.dll
           path: target/i686-pc-windows-msvc/release/auxlua.dll
+      - name: Build (release) (with auxcov)
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-pc-windows-msvc --release --features coverage
+      - uses: actions/upload-artifact@v1
+        with:
+          name: auxlua-coverage.dll
+          path: target/i686-pc-windows-msvc/release/auxlua.dll
   build-linux:
     runs-on: ubuntu-20.04
     needs: check-needs-rebuild
@@ -102,6 +112,16 @@ jobs:
         with:
           name: auxlua
           path: target/i686-unknown-linux-gnu/release/libauxlua.so
+      - name: Build (release) (with coverage)
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-unknown-linux-gnu --release --features coverage
+      - uses: actions/upload-artifact@v1
+        with:
+          name: auxlua
+          path: target/i686-unknown-linux-gnu/release/libauxlua-coverage.so
   release:
     runs-on: ubuntu-20.04
     needs: ["build-windows", "build-linux"]
@@ -141,6 +161,15 @@ jobs:
           asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua/libauxlua.so
           asset_name: libauxlua.so
           asset_content_type: application/octet-stream
+      - name: Upload Linux build (with coverage)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua/libauxlua-coverage.so
+          asset_name: libauxlua-coverage.so
+          asset_content_type: application/octet-stream
       - name: Upload Windows build
         uses: actions/upload-release-asset@v1
         env:
@@ -149,4 +178,13 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll/auxlua.dll
           asset_name: auxlua.dll
+          asset_content_type: application/octet-stream
+      - name: Upload Windows build (with coverage)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.download_artifacts.outputs.download-path }}/auxlua.dll/auxlua-coverage.dll
+          asset_name: auxlua-coverage.dll
           asset_content_type: application/octet-stream

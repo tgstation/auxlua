@@ -4,7 +4,7 @@
 
 ### Added
 
-- Auxlua comes bundled with [auxcov](https://www.github.com/willox/auxtools/tree/master/auxcov), a library for DM code coverage.
+- Auxlua comes bundled with [auxcov](https://www.github.com/willox/auxtools/tree/master/auxcov), a library for DM code coverage. Download `auxlua-coverage.dll` on Windows or `libauxlua-coverage.so` on Linux for the build bundled with auxcov.
 
 ### Fixes
 

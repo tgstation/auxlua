@@ -11,4 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = {git = "https://github.com/willox/auxtools"}
+auxcov = {git = "https://github.com/willox/auxtools", optional = true, default-features = false }
 mlua = {version = "0.8.2", features = ["luau"]}
+
+[features]
+coverage = ["auxcov"]

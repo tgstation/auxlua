@@ -25,8 +25,8 @@ jobs:
         id: changed-files
         with:
           files: |
-            **.rs
-            cargo.lock
+            **/*.rs
+            Cargo.lock
   build-windows:
     runs-on: windows-latest
     needs: check-needs-rebuild

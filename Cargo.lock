@@ -159,7 +159,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "auxcov"
 version = "1.0.0"
-source = "git+https://github.com/willox/auxtools#efcedd352b49c325dbf6ee21e44ffc0604020dd6"
+source = "git+https://github.com/willox/auxtools#4553e97661ca5c2838961553ef1306ab8a170715"
 dependencies = [
  "auxtools",
  "dmasm",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "auxlua"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "auxcov",
  "auxtools",
@@ -179,7 +179,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#efcedd352b49c325dbf6ee21e44ffc0604020dd6"
+source = "git+https://github.com/willox/auxtools#4553e97661ca5c2838961553ef1306ab8a170715"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -198,7 +198,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#efcedd352b49c325dbf6ee21e44ffc0604020dd6"
+source = "git+https://github.com/willox/auxtools#4553e97661ca5c2838961553ef1306ab8a170715"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -1005,7 +1005,7 @@ dependencies = [
 [[package]]
 name = "instruction_hooking"
 version = "1.0.0"
-source = "git+https://github.com/willox/auxtools#efcedd352b49c325dbf6ee21e44ffc0604020dd6"
+source = "git+https://github.com/willox/auxtools#4553e97661ca5c2838961553ef1306ab8a170715"
 dependencies = [
  "auxtools",
  "cc",

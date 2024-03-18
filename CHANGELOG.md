@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.4]
+
+### Fixes
+
+- Bumps the version dependency of auxtools, adding support for up to 515.1633 on all platforms
+
+## [1.4.3]
+
+### Fixes
+
+- Bumps the version dependency of auxtools, adding support for up to 515.1621 on all platforms
+
 ## [1.4.2]
 
 ### Added

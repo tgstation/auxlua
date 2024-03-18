@@ -28,14 +28,15 @@ type LuaModValue = lua::Value;
 type LuaResult<T> = mlua::Result<T>;
 
 macro_rules! err_as_string {
-    ($expr:expr) => {
-        match $expr {
+    ($expr:expr) => {{
+        let result = $expr;
+        match result {
             Ok(ok) => ok,
             Err(err) => {
                 return DMValue::from_string(format!("{},{}: {}", std::file!(), std::line!(), err))
             }
         }
-    };
+    }};
 }
 
 thread_local! {

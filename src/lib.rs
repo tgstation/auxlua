@@ -1,6 +1,6 @@
 use auxtools::{hook, init, runtime, shutdown, DMResult, List, Proc, Runtime};
 use lua::{
-    AuxluaError, DMValue, GlobalWrapper, MluaValue, DATUM_CALL_PROC_WRAPPER,
+    AuxluaError, DMValue, GlobalWrapper, MluaValue, CAN_GET_VAR_WRAPPER, DATUM_CALL_PROC_WRAPPER,
     GLOBAL_CALL_PROC_WRAPPER, LUA_THREAD_START, PRINT_WRAPPER, SET_VAR_WRAPPER,
 };
 use mlua::{FromLua, Function, Lua, MultiValue, Table, Thread, ThreadStatus, ToLua, VmState};
@@ -358,6 +358,19 @@ fn over_exec_usage(_: &Lua, fraction_opt: Option<f32>) -> LuaResult<bool> {
     LUA_THREAD_START.with(|start| {
         EXECUTION_LIMIT
             .with(|limit| Ok(start.borrow().elapsed() > limit.borrow().mul_f32(fraction)))
+    })
+}
+
+/// Sets the proc path to call when getting
+/// a datum's variable check to see if said
+/// variable is even allowed to be read.
+#[hook("/proc/__lua_set_can_get_var_wrapper")]
+fn set_can_get_var_wrapper(wrapper: DMValue) {
+    wrapper.as_string().and_then(|wrapper_string| {
+        CAN_GET_VAR_WRAPPER.with(|wrapper| {
+            *wrapper.borrow_mut() = Some(wrapper_string);
+            Ok(DMValue::null())
+        })
     })
 }
 

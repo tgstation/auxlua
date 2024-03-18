@@ -54,6 +54,7 @@ macro_rules! specific_external {
 
 thread_local! {
     pub static LUA_THREAD_START: RefCell<Instant> = RefCell::new(Instant::now());
+    pub static CAN_GET_VAR_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
     pub static SET_VAR_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
     pub static DATUM_CALL_PROC_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
     pub static GLOBAL_CALL_PROC_WRAPPER: RefCell<Option<String>> = RefCell::new(None);
@@ -626,7 +627,29 @@ fn datum_call_proc<'lua>(
     }
 }
 
+fn datum_can_get_var(datum: &DMValue, var: &str) -> DMResult<bool> {
+    let var = DMValue::from_string(var)?;
+    CAN_GET_VAR_WRAPPER.with(|wrapper| match &*wrapper.borrow() {
+        Some(wrapper_name) => {
+            let wrapper_proc = Proc::find(wrapper_name)
+                .ok_or_else(|| specific_runtime!("{} not found", wrapper_name))?;
+            match wrapper_proc.call(&[datum, &var]) {
+                Ok(value) => Ok(value.is_truthy()),
+                Err(e) => Err(specific_runtime!(e.message)),
+            }
+        }
+        None => Ok(true),
+    })
+}
+
 fn datum_get_var(datum: &DMValue, var: String) -> DMResult<Value> {
+    if datum.raw.tag == ValueTag::Datum && !datum_can_get_var(datum, &var)? {
+        return Err(specific_runtime!(format!(
+            "Forbidden from reading var '{}' from {}",
+            var,
+            datum.get_type()?
+        )));
+    }
     StringRef::from_raw(var.as_bytes()).and_then(|var_ref| {
         datum.get(var_ref).and_then(|value| match value.raw.tag {
             ValueTag::MobContents

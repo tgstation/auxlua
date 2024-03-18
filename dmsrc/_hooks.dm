@@ -2,6 +2,16 @@
 	var/__auxtools_weakref_id //used by auxtools for weak references
 
 /**
+ * Sets a global proc to call to check to see if a variable can be read.
+ *
+ * The proc will be called with the arguments (datum/datum_to_read, var_name)
+ *
+ * required wrapper text the name of the proc to use as the wrapper
+ */
+/proc/__lua_set_can_get_var_wrapper(wrapper)
+	CRASH("auxlua not loaded")
+
+/**
  * Sets a global proc to call in place of just outright setting a datum's var to a given value
  *
  * The proc will be called with the arguments (datum/datum_to_modify, var_name, value)
